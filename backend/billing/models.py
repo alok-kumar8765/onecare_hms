@@ -65,7 +65,7 @@ class InvoiceLineItem(TimeStampedModel):
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
     gst_rate_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"))
     line_total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
-
+    hsn_sac_code = models.CharField(max_length=16, blank=True, default="")
 
 class PaymentTransaction(BranchScopedModel):
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="payments")

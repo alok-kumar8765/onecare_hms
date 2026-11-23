@@ -20,6 +20,13 @@ from core.scoping import (
     resolve_scoped_branch_id,
     validate_patient_branch_alignment,
 )
+from collections import defaultdict
+
+
+def _q(val: Decimal) -> Decimal:
+    return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -345,3 +352,68 @@ def export_invoices_csv(invoices_qs: QuerySet) -> str:
             "created_at": inv.created_at.isoformat(),
         })
     return export_rows_to_csv(headers, rows)
+
+def build_gst_return_summary(*, tenant_id, branch_id=None) -> dict:
+    """
+    Produces a GSTR-1 / GSTR-3B style tax summary grouped by tax rate (GSTR-3B)
+    and HSN/SAC code (GSTR-1 HSN summary) for invoices in a tenant (and optional branch).
+    """
+    qs = Invoice.objects.prefetch_related("items").filter(tenant_id=tenant_id)
+    if branch_id:
+        qs = qs.filter(branch_id=branch_id)
+
+    rate_buckets = defaultdict(
+        lambda: {
+            "taxable_value": Decimal("0.00"),
+            "cgst": Decimal("0.00"),
+            "sgst": Decimal("0.00"),
+            "total_tax": Decimal("0.00"),
+            "invoice_count": 0,
+        }
+    )
+    hsn_buckets = defaultdict(
+        lambda: {
+            "hsn_sac_code": "UNSPECIFIED",
+            "quantity": Decimal("0.00"),
+            "taxable_value": Decimal("0.00"),
+            "cgst": Decimal("0.00"),
+            "sgst": Decimal("0.00"),
+            "total_value": Decimal("0.00"),
+        }
+    )
+
+    for inv in qs:
+        seen_rates_for_invoice = set()
+        for item in inv.items.all():
+            qty = Decimal(str(getattr(item, "quantity", 1) or 1))
+            unit_price = Decimal(str(getattr(item, "unit_price", Decimal("0.00")) or Decimal("0.00")))
+            taxable = _q(qty * unit_price)
+            rate = _q(Decimal(str(getattr(item, "gst_rate_percent", Decimal("0.00")) or Decimal("0.00"))))
+            tax_amt = _q((taxable * rate) / Decimal("100"))
+            cgst = _q(tax_amt / Decimal("2"))
+            sgst = _q(tax_amt - cgst)
+            hsn = (getattr(item, "hsn_sac_code", "") or "").strip() or "UNSPECIFIED"
+
+            r_bucket = rate_buckets[str(rate)]
+            r_bucket["taxable_value"] = _q(r_bucket["taxable_value"] + taxable)
+            r_bucket["cgst"] = _q(r_bucket["cgst"] + cgst)
+            r_bucket["sgst"] = _q(r_bucket["sgst"] + sgst)
+            r_bucket["total_tax"] = _q(r_bucket["total_tax"] + tax_amt)
+            if str(rate) not in seen_rates_for_invoice:
+                r_bucket["invoice_count"] += 1
+                seen_rates_for_invoice.add(str(rate))
+
+            h_bucket = hsn_buckets[hsn]
+            h_bucket["hsn_sac_code"] = hsn
+            h_bucket["quantity"] = _q(h_bucket["quantity"] + qty)
+            h_bucket["taxable_value"] = _q(h_bucket["taxable_value"] + taxable)
+            h_bucket["cgst"] = _q(h_bucket["cgst"] + cgst)
+            h_bucket["sgst"] = _q(h_bucket["sgst"] + sgst)
+            h_bucket["total_value"] = _q(h_bucket["total_value"] + taxable + tax_amt)
+
+    return {
+        "gstr_3b_by_rate": [
+            {"gst_rate_percent": k, **v} for k, v in sorted(rate_buckets.items())
+        ],
+        "gstr_1_hsn_summary": [v for _, v in sorted(hsn_buckets.items())],
+    }
