@@ -1,4 +1,5 @@
 # backend/clinic/views.py
+from core.linked_workflows import dispense_prescription_to_pharmacy_sale
 from datetime import date
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
@@ -44,6 +45,12 @@ def clinic_dashboard_view(request):
     error = None
     last_saved_patient = None
 
+    if request.method == "POST" and not tenant_id:
+        error = (
+            "No clinic or hospital organization (tenant) is linked to your account. "
+            "Sign in with a tenant staff account or use a tenant-scoped account first."
+        )
+        
     if request.method == "POST" and tenant_id:
         if not tenant_id and request.method == "POST":
             error = "No clinic/hospital tenant is associated with your account. Sign in with a tenant user or assign a tenant first."
@@ -121,6 +128,18 @@ def clinic_dashboard_view(request):
                         request=request,
                     )
                     feedback = f"Saved consultation & prescription for {patient.full_name}."
+            elif action == "dispense_prescription":
+                sale = dispense_prescription_to_pharmacy_sale(
+                    tenant_id=tenant_id,
+                    prescription_id=request.POST.get("prescription_id"),
+                    branch_id=getattr(request.user, "primary_branch_id", None),
+                    actor=request.user,
+                    request=request,
+                )
+                feedback = (
+                    f"Dispensed prescription into Pharmacy Sale "
+                    f"{sale.invoice_number} (Total ₹{sale.total_amount})."
+                )
         except ValueError as exc:
             error = str(exc)
 

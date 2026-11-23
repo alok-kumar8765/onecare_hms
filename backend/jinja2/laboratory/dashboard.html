@@ -85,6 +85,14 @@
             </form>
             <form method="post" class="inline">
               {{ csrf_input }}
+              <input type="hidden" name="action" value="convert_to_invoice" />
+              <input type="hidden" name="order_id" value="{{ o.id }}" />
+              <button type="submit" class="rounded bg-amber-600 hover:bg-amber-500 px-2.5 py-1 font-semibold text-white">
+                Convert to Invoice
+              </button>
+            </form>
+            <form method="post" class="inline">
+              {{ csrf_input }}
               <input type="hidden" name="action" value="verify_order" />
               <input type="hidden" name="order_id" value="{{ o.id }}" />
               <button type="submit" class="rounded bg-emerald-600 hover:bg-emerald-500 px-2.5 py-1 font-semibold text-white">Verify Report</button>

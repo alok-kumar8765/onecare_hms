@@ -82,13 +82,26 @@
         </div>
         <p class="text-slate-300">Reason: {{ adm.admission_reason }}</p>
         {% if adm.status == 'ADMITTED' %}
-        <form method="post" class="flex flex-wrap gap-2 pt-1">
-          {{ csrf_input }}
-          <input type="hidden" name="action" value="discharge" />
-          <input type="hidden" name="admission_id" value="{{ adm.id }}" />
-          <input type="text" name="discharge_summary" placeholder="Discharge summary..." class="flex-1 rounded bg-slate-900 border border-slate-700 px-2.5 py-1 text-white" />
-          <button type="submit" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1 font-semibold text-white">Discharge & Settle</button>
-        </form>
+          <form method="post" class="flex flex-wrap gap-2 pt-1">
+            {{ csrf_input }}
+            <input type="hidden" name="action" value="discharge" />
+            <input type="hidden" name="admission_id" value="{{ adm.id }}" />
+            <input type="text" name="discharge_summary" placeholder="Discharge summary..." class="flex-1 rounded bg-slate-900 border border-slate-700 px-2.5 py-1 text-white" />
+            <button type="submit" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1 font-semibold text-white">Discharge & Settle</button>
+          </form>
+          {% endif %}
+
+          {% if adm.status == 'DISCHARGED' %}
+          <div class="pt-1">
+            <form method="post" class="inline">
+              {{ csrf_input }}
+              <input type="hidden" name="action" value="convert_to_invoice" />
+              <input type="hidden" name="admission_id" value="{{ adm.id }}" />
+              <button type="submit" class="rounded bg-amber-600 hover:bg-amber-500 px-3 py-1 font-semibold text-white">
+                Convert to Invoice
+              </button>
+            </form>
+          </div>
         {% endif %}
       </div>
       {% else %}

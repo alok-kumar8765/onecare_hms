@@ -1,4 +1,5 @@
 # backend/ipd/views.py
+from core.linked_workflows import create_invoice_from_ipd_admission
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
@@ -26,6 +27,12 @@ def ipd_dashboard_view(request):
     feedback = None
     error = None
 
+    if request.method == "POST" and not tenant_id:
+        error = (
+            "No clinic or hospital organization (tenant) is linked to your account. "
+            "Sign in with a tenant staff account or use a tenant-scoped account first."
+        )
+        
     if request.method == "POST" and tenant_id:
         action = request.POST.get("action")
         try:
@@ -86,6 +93,14 @@ def ipd_dashboard_view(request):
                     request=request,
                 )
                 feedback = f"Discharged {adm.admission_number} — Final Bill: ₹{adm.total_amount}."
+            elif action == "convert_to_invoice":
+                inv = create_invoice_from_ipd_admission(
+                    tenant_id=tenant_id,
+                    admission_id=request.POST.get("admission_id"),
+                    actor=request.user,
+                    request=request,
+                )
+                feedback = f"Generated Billing Invoice {inv.invoice_number} (Total ₹{inv.total_amount})."
         except (ValueError, InvalidOperation) as exc:
             error = str(exc)
 

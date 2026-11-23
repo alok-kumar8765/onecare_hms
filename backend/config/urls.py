@@ -34,6 +34,7 @@ urlpatterns = [
     path("api/v1/pharmacy/", include("pharmacy.api_urls")),
     path("api/v1/laboratory/", include("laboratory.api_urls")),
     path("api/v1/ipd/", include("ipd.api_urls")),
+    path("api/v1/billing/", include("billing.api_urls")),
     path("accounts/", include("accounts.urls")),
     path("tenants/", include("tenants.urls")),
     path("licensing/", include("licensing.urls")),
@@ -41,6 +42,7 @@ urlpatterns = [
     path("pharmacy/", include("pharmacy.urls")),
     path("laboratory/", include("laboratory.urls")),
     path("ipd/", include("ipd.urls")),
+    path("billing/", include("billing.urls")),
 ]
 
 if settings.DEBUG:

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OneCare HMS — No-Shell Tenant & Staff Setup Wizard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6">
+  <div class="max-w-6xl mx-auto space-y-6">
+    <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div>
+        <p class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">OneCare HMS · Onboarding & Setup</p>
+        <h1 class="text-xl font-bold text-white">Tenant, Branch, Module & Staff Setup Wizard</h1>
+      </div>
+      <div class="flex gap-2 text-xs">
+        <a href="{{ url('tenants-reports') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2 text-emerald-300">Reports Hub</a>
+        <a href="{{ url('clinic-dashboard') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">Clinic</a>
+        <a href="{{ url('pharmacy-dashboard') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">Pharmacy</a>
+        <a href="{{ url('laboratory-dashboard') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">Lab</a>
+        <a href="{{ url('ipd-dashboard') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">IPD</a>
+        <a href="{{ url('billing-dashboard') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">Billing</a>
+        <a href="{{ url('accounts-logout') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">Sign Out</a>
+      </div>
+    </div>
+
+    {% if feedback %}
+    <div class="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-200">{{ feedback }}</div>
+    {% endif %}
+    {% if error %}
+    <div class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">{{ error }}</div>
+    {% endif %}
+
+    <!-- Select Active Organization -->
+    <form method="get" class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center gap-3 text-xs">
+      <label class="text-slate-400 font-medium">Active Organization:</label>
+      <select name="tenant_id" class="flex-1 min-w-[240px] rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-white">
+        {% for t in all_tenants %}
+        <option value="{{ t.id }}" {{ 'selected' if selected_tenant_id == t.id|string else '' }}>
+          {{ t.name }} ({{ t.id }})
+        </option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-4 py-2 font-semibold text-white">Load Tenant</button>
+    </form>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 text-xs">
+      {% if is_super %}
+      <!-- 1. Provision New Clinic or Multi-Branch Hospital -->
+      <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2.5">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="create_tenant" />
+        <h2 class="font-semibold text-white text-sm">1. Register Clinic / Hospital Tenant</h2>
+        <input type="text" name="name" required placeholder="Organization Name" class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        <select name="deployment_preset" class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5">
+          {% for val, label in deployment_presets %}
+          <option value="{{ val }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 py-2 font-semibold text-white">Provision Tenant</button>
+      </form>
+      {% endif %}
+
+      <!-- 2. Add Branch -->
+      <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2.5">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="add_branch" />
+        <input type="hidden" name="tenant_id" value="{{ selected_tenant_id }}" />
+        <h2 class="font-semibold text-white text-sm">2. Add Branch to Organization</h2>
+        <input type="text" name="branch_name" required placeholder="Branch Name (e.g., East Wing)" class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        <input type="text" name="branch_code" required placeholder="Branch Code (e.g., EAST)" class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        <input type="text" name="address" placeholder="Address / City" class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        <button type="submit" class="w-full rounded-lg bg-slate-800 hover:bg-slate-700 py-2 font-semibold text-white">Add Branch</button>
+      </form>
+
+      <!-- 3. Create Staff Account -->
+      <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2.5">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="create_staff" />
+        <input type="hidden" name="tenant_id" value="{{ selected_tenant_id }}" />
+        <h2 class="font-semibold text-white text-sm">3. Create Doctor / Staff User</h2>
+        <input type="text" name="username" required placeholder="Username (e.g., dr_sharma)" class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        <input type="password" name="password" required placeholder="Password" class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        <div class="grid grid-cols-2 gap-2">
+          <select name="role" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5">
+            {% for r in staff_roles %}
+            <option value="{{ r }}">{{ r }}</option>
+            {% endfor %}
+          </select>
+          <select name="branch_id" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5">
+            <option value="">Main / Any Branch</option>
+            {% for b in branches %}
+            <option value="{{ b.id }}">{{ b.code }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button type="submit" class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 py-2 font-semibold text-white">Create User</button>
+      </form>
+    </div>
+
+    {% if active_tenant %}
+    <!-- Module Toggles -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3 text-xs">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="font-semibold text-white text-sm">Module Entitlements — {{ active_tenant.name }}</h2>
+        <span class="font-mono text-slate-400">tenant_id: {{ active_tenant.id }}</span>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        {% for ent in entitlements %}
+        <form method="post" class="inline">
+          {{ csrf_input }}
+          <input type="hidden" name="action" value="set_module" />
+          <input type="hidden" name="tenant_id" value="{{ active_tenant.id }}" />
+          <input type="hidden" name="module_code" value="{{ ent.module_code }}" />
+          <input type="hidden" name="is_enabled" value="{{ 'false' if ent.is_enabled else 'true' }}" />
+          <button type="submit"
+                  class="px-3 py-1.5 rounded font-medium {{ 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' if ent.is_enabled else 'bg-slate-950 text-slate-400 border border-slate-700' }}">
+            {{ ent.module_code }}: {{ 'ON' if ent.is_enabled else 'OFF' }}
+          </button>
+        </form>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Branches & Staff Summary -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2">
+        <h3 class="font-semibold text-white text-sm">Branches ({{ branches|length }})</h3>
+        {% for b in branches %}
+        <div class="rounded bg-slate-950 border border-slate-800 px-3 py-2 flex items-center justify-between">
+          <span><strong>{{ b.name }}</strong> ({{ b.code }})</span>
+          <span class="font-mono text-slate-400">{{ b.id }}</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2">
+        <h3 class="font-semibold text-white text-sm">Organization Users ({{ staff_users|length }})</h3>
+        {% for u in staff_users %}
+        <div class="rounded bg-slate-950 border border-slate-800 px-3 py-2 flex items-center justify-between">
+          <span><strong>{{ u.username }}</strong> · <span class="text-emerald-300">{{ u.role }}</span></span>
+          <span class="text-slate-400">{{ u.primary_branch_id or 'All Branches' }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</body>
+</html>

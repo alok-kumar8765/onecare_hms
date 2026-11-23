@@ -245,14 +245,17 @@
         </button>
 
       </div>
-
+      
       <!-- Filtered Encounters -->
       <div x-show="tab === 'encounters'" class="space-y-2">
 
         {% for enc in encounters %}
-        <div class="rounded-lg bg-slate-950 border border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
+        <div class="rounded-lg bg-slate-950 border border-slate-800 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+
           <div>
-            <span class="font-semibold text-white">{{ enc.patient.full_name }}</span>
+            <span class="font-semibold text-white">
+              {{ enc.patient.full_name }}
+            </span>
 
             <span class="text-slate-400">
               ({{ enc.patient.uhid }}) · {{ enc.encounter_date }}
@@ -260,15 +263,43 @@
 
             <p class="text-slate-300 mt-0.5">
               Complaint: {{ enc.chief_complaint }}
+
               {% if enc.diagnosis %}
-              · Diagnosis: {{ enc.diagnosis }}
+                · Diagnosis: {{ enc.diagnosis }}
               {% endif %}
             </p>
+
+            <span class="text-emerald-300">
+              {{ enc.doctor.get_full_name() or enc.doctor.username if enc.doctor else 'Unassigned' }}
+            </span>
           </div>
 
-          <span class="text-emerald-300">
-            {{ enc.doctor.get_full_name() or enc.doctor.username if enc.doctor else 'Unassigned' }}
-          </span>
+          <!-- Dispense Prescription to Pharmacy -->
+          {% if enc.prescription %}
+          <form method="post" class="inline">
+            {{ csrf_input }}
+
+            <input
+              type="hidden"
+              name="action"
+              value="dispense_prescription"
+            />
+
+            <input
+              type="hidden"
+              name="prescription_id"
+              value="{{ enc.prescription.id }}"
+            />
+
+            <button
+              type="submit"
+              class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-2 text-xs font-semibold text-white"
+            >
+              Dispense to Pharmacy
+            </button>
+          </form>
+          {% endif %}
+
         </div>
 
         {% else %}
@@ -278,6 +309,8 @@
         {% endfor %}
 
       </div>
+
+
 
       <!-- Today's Queue -->
       <div x-show="tab === 'queue'" class="space-y-2">

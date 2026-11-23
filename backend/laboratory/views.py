@@ -1,4 +1,5 @@
 # backend/laboratory/views.py
+from core.linked_workflows import create_invoice_from_lab_order
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
@@ -29,6 +30,12 @@ def laboratory_dashboard_view(request):
     feedback = None
     error = None
 
+    if request.method == "POST" and not tenant_id:
+        error = (
+            "No clinic or hospital organization (tenant) is linked to your account. "
+            "Sign in with a tenant staff account or use a tenant-scoped account first."
+        )
+        
     if request.method == "POST" and tenant_id:
         action = request.POST.get("action")
         try:
@@ -96,6 +103,14 @@ def laboratory_dashboard_view(request):
                     request=request,
                 )
                 feedback = f"Delivered report for {order.order_number}."
+            elif action == "convert_to_invoice":
+                inv = create_invoice_from_lab_order(
+                    tenant_id=tenant_id,
+                    lab_order_id=request.POST.get("order_id"),
+                    actor=request.user,
+                    request=request,
+                )
+                feedback = f"Generated Billing Invoice {inv.invoice_number} (Total ₹{inv.total_amount})."
         except (ValueError, PermissionError, InvalidOperation) as exc:
             error = str(exc)
 
