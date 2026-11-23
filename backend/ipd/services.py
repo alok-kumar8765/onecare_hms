@@ -19,7 +19,7 @@ from .models import (
     Ward,
     WardType,
 )
-
+from core.scoping import resolve_scoped_branch_id, validate_patient_branch_alignment
 
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -100,6 +100,16 @@ def admit_patient_to_bed(
     if not admission_reason or not admission_reason.strip():
         raise ValueError("Admission reason is required.")
 
+    scoped_branch_id = resolve_scoped_branch_id(
+    tenant_id=tenant_id,
+    requested_branch_id=branch_id,
+    fallback_branch_id=getattr(patient, "branch_id", None) if patient else None,
+    )
+    validate_patient_branch_alignment(
+        tenant_id=tenant_id,
+        patient=patient,
+        branch_id=scoped_branch_id,
+    )
     bed = (
         Bed.objects.select_for_update()
         .select_related("ward")
@@ -114,7 +124,7 @@ def admit_patient_to_bed(
     admission_no = f"IPD-{timezone.localdate().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     admission = IPDAdmission.objects.create(
         tenant_id=tenant_id,
-        branch_id=branch_id or bed.branch_id or patient.branch_id,
+        branch_id=scoped_branch_id or bed.branch_id or patient.branch_id,
         admission_number=admission_no,
         patient=patient,
         ward=bed.ward,

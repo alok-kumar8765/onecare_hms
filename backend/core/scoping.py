@@ -10,8 +10,8 @@ def resolve_scoped_branch_id(
 ) -> Optional[object]:
     """
     Validates that a requested or fallback branch belongs to `tenant_id`.
-    Returns a verified branch.id or None if no branch is specified.
-    Raises ValueError if a branch_id exists under a different tenant or is invalid.
+    Returns a verified branch.id or None when no branch is specified.
+    Raises ValueError if a branch_id does not exist or belongs to another tenant.
     """
     if not tenant_id:
         return None
@@ -26,3 +26,16 @@ def resolve_scoped_branch_id(
     if str(branch.tenant_id) != str(tenant_id):
         raise ValueError("Selected branch does not belong to the active organization.")
     return branch.id
+
+
+def validate_patient_branch_alignment(*, tenant_id, patient, branch_id) -> None:
+    """
+    Ensures a patient belongs to `tenant_id` and that, if both `patient.branch_id`
+    and `branch_id` are set, they do not conflict across branches.
+    """
+    if not patient:
+        return
+    if str(patient.tenant_id) != str(tenant_id):
+        raise ValueError("Patient does not belong to the active organization.")
+    if branch_id and getattr(patient, "branch_id", None) and str(patient.branch_id) != str(branch_id):
+        raise ValueError("Patient belongs to a different branch than the selected branch.")

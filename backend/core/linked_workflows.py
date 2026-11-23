@@ -10,10 +10,11 @@ from ipd.models import IPDAdmission
 from laboratory.models import LabOrder
 from pharmacy.models import Medicine, PharmacySale
 from pharmacy.services import dispense_fefo_sale
-
+from core.allergy_checks import find_allergy_conflicts
 
 def _q(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
 
 
 
@@ -26,9 +27,11 @@ def dispense_prescription_to_pharmacy_sale(
     branch_id=None,
     actor=None,
     request=None,
+    override_allergy_warning: bool = False,
 ) -> PharmacySale:
     """
     Converts an OPD prescription into a FEFO pharmacy sale.
+    Checks patient allergies before dispensing.
     """
 
     prescription = (
@@ -45,6 +48,7 @@ def dispense_prescription_to_pharmacy_sale(
         raise ValueError("Prescription not found in your organization.")
 
     line_requests = []
+    medicine_objects = []
 
     for item in prescription.items.all():
         med = Medicine.objects.filter(
@@ -69,10 +73,49 @@ def dispense_prescription_to_pharmacy_sale(
             "quantity": int(qty),
         })
 
+        medicine_objects.append(med)
+
     if not line_requests:
         raise ValueError("Prescription has no medicine items to dispense.")
 
     patient = prescription.encounter.patient
+
+    # -----------------------------------------
+    # PATIENT ALLERGY CHECK
+    # -----------------------------------------
+
+    conflicts = find_allergy_conflicts(
+        raw_allergies=getattr(patient, "allergies_notes", ""),
+        medicine_names=[
+            med.brand_name for med in medicine_objects
+        ],
+        salt_compositions=[
+            getattr(med, "salt_composition", "") or ""
+            for med in medicine_objects
+        ],
+    )
+
+    if conflicts and not override_allergy_warning:
+        record_audit_log(
+            action="workflow.pharmacy_allergy_blocked",
+            resource_type="Prescription",
+            resource_id=prescription.id,
+            actor=actor,
+            tenant_id=tenant_id,
+            branch_id=branch_id or prescription.encounter.branch_id,
+            request=request,
+            metadata={
+                "conflicts": conflicts,
+            },
+        )
+
+        raise ValueError(
+            "Allergy warning: " + "; ".join(conflicts)
+        )
+
+    # -----------------------------------------
+    # DISPENSE PHARMACY SALE
+    # -----------------------------------------
 
     sale = dispense_fefo_sale(
         tenant_id=tenant_id,
@@ -94,10 +137,13 @@ def dispense_prescription_to_pharmacy_sale(
         metadata={
             "prescription_id": str(prescription.id),
             "invoice_number": sale.invoice_number,
+            "allergy_override": bool(conflicts and override_allergy_warning),
+            "allergy_conflicts": conflicts,
         },
     )
 
     return sale
+
 
 
 

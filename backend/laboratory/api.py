@@ -16,7 +16,7 @@ from .services import (
     record_test_result,
     verify_lab_order,
 )
-
+from core.scoping import resolve_scoped_branch_id, validate_patient_branch_alignment
 
 class LabTestListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated, LicenseWriteAndModulePermission]
@@ -60,29 +60,52 @@ class LabOrderListCreateAPIView(APIView):
         tenant_id = getattr(request.user, "tenant_id", None)
         if not tenant_id:
             return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
-        qs = LabOrder.objects.select_related("patient", "sample").prefetch_related("items__test", "items__result").filter(tenant_id=tenant_id)
+
+        qs = LabOrder.objects.select_related("patient").prefetch_related("items__test").filter(tenant_id=tenant_id)
+        raw_branch_id = request.query_params.get("branch_id")
+        if raw_branch_id:
+            try:
+                scoped_branch_id = resolve_scoped_branch_id(
+                    tenant_id=tenant_id,
+                    requested_branch_id=raw_branch_id,
+                )
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            qs = qs.filter(branch_id=scoped_branch_id)
+
         return Response(LabOrderSerializer(qs, many=True).data, status=status.HTTP_200_OK)
 
     def post(self, request):
         tenant_id = getattr(request.user, "tenant_id", None)
         if not tenant_id:
             return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
-        patient_id = request.data.get("patient_id") or request.data.get("patient")
-        patient = Patient.objects.filter(id=patient_id, tenant_id=tenant_id).first()
-        if not patient:
-            return Response({"detail": "Patient not found in your organization."}, status=status.HTTP_404_NOT_FOUND)
+
         try:
+            scoped_branch_id = resolve_scoped_branch_id(
+                tenant_id=tenant_id,
+                requested_branch_id=request.data.get("branch_id"),
+                fallback_branch_id=getattr(request.user, "primary_branch_id", None),
+            )
+            patient_id = request.data.get("patient_id") or request.data.get("patient")
+            patient = Patient.objects.filter(id=patient_id, tenant_id=tenant_id).first() if patient_id else None
+            if not patient:
+                return Response({"detail": "Valid patient_id in your organization is required."}, status=status.HTTP_400_BAD_REQUEST)
+            validate_patient_branch_alignment(
+                tenant_id=tenant_id,
+                patient=patient,
+                branch_id=scoped_branch_id,
+            )
             order = create_lab_order(
                 tenant_id=tenant_id,
                 patient=patient,
                 test_ids=request.data.get("test_ids") or [],
-                branch_id=getattr(request.user, "primary_branch_id", None),
-                notes=request.data.get("notes") or "",
+                branch_id=scoped_branch_id,
                 actor=request.user,
                 request=request,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         return Response(LabOrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
 

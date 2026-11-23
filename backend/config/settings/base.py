@@ -2,6 +2,7 @@ from pathlib import Path
 import environ
 from pathlib import Path
 import environ
+import os
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -121,3 +122,22 @@ LICENSE_SERVER_URL = env("LICENSE_SERVER_URL", default="")
 LICENSE_PUBLIC_KEY = env("LICENSE_PUBLIC_KEY", default="")
 LICENSE_SIGNING_SECRET = env("LICENSE_SIGNING_SECRET", default="")
 LICENSE_OFFLINE_GRACE_HOURS = env("LICENSE_OFFLINE_GRACE_HOURS")
+
+TRUSTED_PROXY_IPS = [
+    ip.strip()
+    for ip in os.environ.get("TRUSTED_PROXY_IPS", "127.0.0.1,::1").split(",")
+    if ip.strip()
+]
+
+# Merge into existing REST_FRAMEWORK dict in backend/config/settings/base.py
+REST_FRAMEWORK = {
+    **globals().get("REST_FRAMEWORK", {}),
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": os.environ.get("DRF_THROTTLE_ANON", "30/min"),
+        "user": os.environ.get("DRF_THROTTLE_USER", "240/min"),
+    },
+}

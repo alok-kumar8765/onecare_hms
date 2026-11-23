@@ -13,6 +13,11 @@ from .services import (
     filter_encounters_queryset,
     register_patient,
     schedule_appointment,
+    create_scoped_patient,
+)
+from core.scoping import (
+    resolve_scoped_branch_id,
+    validate_patient_branch_alignment,
 )
 
 
@@ -33,29 +38,56 @@ class PatientListCreateAPIView(APIView):
         tenant_id = getattr(request.user, "tenant_id", None)
         if not tenant_id:
             return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
+
         qs = Patient.objects.filter(tenant_id=tenant_id)
         search = (request.query_params.get("q") or "").strip()
         if search:
             qs = qs.filter(full_name__icontains=search) | Patient.objects.filter(
                 tenant_id=tenant_id, phone_number__icontains=search
             )
-        return Response(PatientSerializer(qs, many=True, context={"request": request}).data, status=status.HTTP_200_OK)
 
+        raw_branch_id = request.query_params.get("branch_id")
+        if raw_branch_id:
+            try:
+                scoped_branch_id = resolve_scoped_branch_id(
+                    tenant_id=tenant_id,
+                    requested_branch_id=raw_branch_id,
+                )
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            qs = qs.filter(branch_id=scoped_branch_id)
+
+        return Response(PatientSerializer(qs, many=True).data, status=status.HTTP_200_OK)
     def post(self, request):
         tenant_id = getattr(request.user, "tenant_id", None)
         if not tenant_id:
-            return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "No tenant context found."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         full_name = (request.data.get("full_name") or "").strip()
         if not full_name:
-            return Response({"detail": "full_name is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "full_name is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
+            scoped_branch_id = resolve_scoped_branch_id(
+                tenant_id=tenant_id,
+                requested_branch_id=request.data.get("branch_id"),
+                fallback_branch_id=getattr(request.user, "primary_branch_id", None),
+            )
+
             dob = _parse_optional_date(request.data.get("date_of_birth"))
-            allow_dup = str(request.data.get("allow_duplicate", "false")).lower() in {"true", "1", "yes"}
+            allow_dup = str(
+                request.data.get("allow_duplicate", "false")
+            ).lower() in {"true", "1", "yes"}
+
             patient, duplicates = register_patient(
                 tenant_id=tenant_id,
-                branch_id=getattr(request.user, "primary_branch_id", None),
+                branch_id=scoped_branch_id,
                 full_name=full_name,
                 gender=request.data.get("gender") or "OTHER",
                 date_of_birth=dob,
@@ -70,12 +102,28 @@ class PatientListCreateAPIView(APIView):
                 actor=request.user,
                 request=request,
             )
+
         except ValueError as exc:
-            return Response({"detail": str(exc), "duplicate_warning": True}, status=status.HTTP_409_CONFLICT)
+            error_message = str(exc)
+            duplicate_error = "duplicate" in error_message.lower()
+            return Response(
+                {
+                    "detail": error_message,
+                    "duplicate_warning": duplicate_error,
+                },
+                status=(
+                    status.HTTP_409_CONFLICT
+                    if duplicate_error
+                    else status.HTTP_400_BAD_REQUEST
+                ),
+            )
 
         return Response(
             {
-                "patient": PatientSerializer(patient, context={"request": request}).data,
+                "patient": PatientSerializer(
+                    patient,
+                    context={"request": request},
+                ).data,
                 "duplicate_count": len(duplicates),
             },
             status=status.HTTP_201_CREATED,

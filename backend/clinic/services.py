@@ -7,7 +7,61 @@ from django.utils import timezone
 from core.audit import record_audit_log
 from core.import_export import export_rows_to_csv
 from .models import Appointment, AppointmentStatus, OPDEncounter, Patient, Prescription, PrescriptionItem
+from django.db import transaction
+from core.scoping import resolve_scoped_branch_id, validate_patient_branch_alignment
+from .models import OPDEncounter, Patient
 
+
+@transaction.atomic
+def create_scoped_patient(
+    *,
+    tenant_id,
+    full_name: str,
+    phone_number: str = "",
+    branch_id=None,
+    **extra_fields,
+) -> Patient:
+    scoped_branch_id = resolve_scoped_branch_id(
+        tenant_id=tenant_id,
+        requested_branch_id=branch_id,
+    )
+    return Patient.objects.create(
+        tenant_id=tenant_id,
+        branch_id=scoped_branch_id,
+        full_name=full_name.strip(),
+        phone_number=(phone_number or "").strip(),
+        **extra_fields,
+    )
+
+
+@transaction.atomic
+def create_scoped_opd_encounter(
+    *,
+    tenant_id,
+    patient: Patient,
+    doctor,
+    chief_complaint: str,
+    diagnosis: str = "",
+    branch_id=None,
+) -> OPDEncounter:
+    scoped_branch_id = resolve_scoped_branch_id(
+        tenant_id=tenant_id,
+        requested_branch_id=branch_id,
+        fallback_branch_id=getattr(patient, "branch_id", None),
+    )
+    validate_patient_branch_alignment(
+        tenant_id=tenant_id,
+        patient=patient,
+        branch_id=scoped_branch_id,
+    )
+    return OPDEncounter.objects.create(
+        tenant_id=tenant_id,
+        branch_id=scoped_branch_id,
+        patient=patient,
+        doctor=doctor,
+        chief_complaint=chief_complaint.strip(),
+        diagnosis=diagnosis.strip(),
+    )
 
 def find_duplicate_patients(
     *,

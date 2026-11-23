@@ -17,7 +17,7 @@ VERIFIER_ROLES = {
     UserRole.LAB_MANAGER,
     UserRole.DOCTOR,
 }
-
+from core.scoping import resolve_scoped_branch_id, validate_patient_branch_alignment
 
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -77,6 +77,17 @@ def create_lab_order(
     actor=None,
     request=None,
 ) -> LabOrder:
+    
+    scoped_branch_id = resolve_scoped_branch_id(
+    tenant_id=tenant_id,
+    requested_branch_id=branch_id,
+    fallback_branch_id=getattr(patient, "branch_id", None) if patient else None,
+    )
+    validate_patient_branch_alignment(
+        tenant_id=tenant_id,
+        patient=patient,
+        branch_id=scoped_branch_id,
+    )
     if not test_ids:
         raise ValueError("At least one lab test must be selected.")
     tests = list(LabTest.objects.filter(tenant_id=tenant_id, id__in=test_ids, is_active=True))
@@ -86,7 +97,7 @@ def create_lab_order(
     order_no = f"LAB-{timezone.localdate().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     order = LabOrder.objects.create(
         tenant_id=tenant_id,
-        branch_id=branch_id or patient.branch_id,
+        branch_id=scoped_branch_id or patient.branch_id,
         order_number=order_no,
         patient=patient,
         ordered_by=actor,

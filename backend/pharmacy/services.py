@@ -17,7 +17,22 @@ from .models import (
     Supplier,
 )
 
+from core.scoping import resolve_scoped_branch_id, validate_patient_branch_alignment
 
+
+# At the start of your FEFO sale/dispensing service function:
+def _prepare_pharmacy_branch_and_patient(*, tenant_id, patient=None, branch_id=None):
+    scoped_branch_id = resolve_scoped_branch_id(
+        tenant_id=tenant_id,
+        requested_branch_id=branch_id,
+        fallback_branch_id=getattr(patient, "branch_id", None) if patient else None,
+    )
+    validate_patient_branch_alignment(
+        tenant_id=tenant_id,
+        patient=patient,
+        branch_id=scoped_branch_id,
+    )
+    return scoped_branch_id
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 

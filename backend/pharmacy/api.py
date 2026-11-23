@@ -10,6 +10,12 @@ from .models import PharmacySale
 from .serializers import MedicineBatchSerializer, MedicineSerializer, PharmacySaleSerializer
 from .services import add_medicine_and_batch, dispense_fefo_sale, search_medicines
 
+from clinic.models import Patient
+from core.linked_workflows import dispense_prescription_to_pharmacy_sale
+from core.permissions import LicenseWriteAndModulePermission
+from core.scoping import resolve_scoped_branch_id, validate_patient_branch_alignment
+from tenants.models import ModuleCode
+
 
 class MedicineSearchAddAPIView(APIView):
     permission_classes = [IsAuthenticated, LicenseWriteAndModulePermission]
@@ -65,6 +71,21 @@ class PharmacyDispenseAPIView(APIView):
         if not tenant_id:
             return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
         qs = PharmacySale.objects.prefetch_related("items").filter(tenant_id=tenant_id)
+        raw_branch_id = request.query_params.get("branch_id")
+
+        if raw_branch_id is not None:
+            try:
+                scoped_branch_id = resolve_scoped_branch_id(
+                    tenant_id=tenant_id,
+                    requested_branch_id=raw_branch_id,
+                )
+            except ValueError as exc:
+                return Response(
+                    {"detail": str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            qs = qs.filter(branch_id=scoped_branch_id)
         return Response(PharmacySaleSerializer(qs, many=True).data, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -74,11 +95,34 @@ class PharmacyDispenseAPIView(APIView):
 
         items = request.data.get("items") or []
         try:
+            scoped_branch_id = resolve_scoped_branch_id(
+                tenant_id=tenant_id,
+                requested_branch_id=request.data.get("branch_id"),
+                fallback_branch_id=getattr(request.user, "primary_branch_id", None),
+            )
+
+            patient = None
+            patient_id = request.data.get("patient_id") or request.data.get("patient")
+            if patient_id:
+                patient = Patient.objects.filter(id=patient_id, tenant_id=tenant_id).first()
+                if not patient:
+                    return Response({"detail": "Patient not found in your organization."}, status=status.HTTP_404_NOT_FOUND)
+                validate_patient_branch_alignment(
+                    tenant_id=tenant_id,
+                    patient=patient,
+                    branch_id=scoped_branch_id,
+                )
+
+            resolved_branch_id = scoped_branch_id or (patient.branch_id if patient else None)
+            customer_name = (request.data.get("customer_name") or "").strip() or (
+                patient.full_name if patient else ""
+            )
+
             sale = dispense_fefo_sale(
                 tenant_id=tenant_id,
-                branch_id=getattr(request.user, "primary_branch_id", None),
+                branch_id=resolved_branch_id,
                 items_requested=items,
-                customer_name=(request.data.get("customer_name") or "").strip(),
+                customer_name=customer_name,
                 actor=request.user,
                 request=request,
             )

@@ -16,7 +16,10 @@ from .models import (
     PaymentMethod,
     PaymentTransaction,
 )
-
+from core.scoping import (
+    resolve_scoped_branch_id,
+    validate_patient_branch_alignment,
+)
 
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -38,16 +41,54 @@ def create_invoice_with_items(
     if not items:
         raise ValueError("At least one invoice line item is required.")
 
+    # Validate patient tenant ownership before using patient data.
+    if patient is not None:
+        if str(patient.tenant_id) != str(tenant_id):
+            raise ValueError(
+                "Patient does not belong to your organization."
+            )
+
+    # Resolve branch within the current tenant.
+    scoped_branch_id = resolve_scoped_branch_id(
+        tenant_id=tenant_id,
+        requested_branch_id=branch_id,
+        fallback_branch_id=(
+            getattr(patient, "branch_id", None)
+            if patient is not None
+            else None
+        ),
+    )
+
+    # Validate patient and invoice branch alignment.
+    if patient is not None:
+        validate_patient_branch_alignment(
+            tenant_id=tenant_id,
+            patient=patient,
+            branch_id=scoped_branch_id,
+        )
+
     clean_discount = _quantize_money(discount_amount)
+
     if clean_discount < Decimal("0.00"):
         raise ValueError("Discount amount cannot be negative.")
 
-    resolved_customer = (customer_name or "").strip() or (patient.full_name if patient else "Walk-in Patient")
-    inv_no = f"INV-{timezone.localdate().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    resolved_customer = (
+        (customer_name or "").strip()
+        or (
+            patient.full_name
+            if patient
+            else "Walk-in Patient"
+        )
+    )
+
+    inv_no = (
+        f"INV-{timezone.localdate().strftime('%Y%m%d')}-"
+        f"{uuid.uuid4().hex[:6].upper()}"
+    )
 
     invoice = Invoice.objects.create(
         tenant_id=tenant_id,
-        branch_id=branch_id or (patient.branch_id if patient else None),
+        branch_id=scoped_branch_id,
         invoice_number=inv_no,
         patient=patient,
         customer_name=resolved_customer,
@@ -62,35 +103,74 @@ def create_invoice_with_items(
     for raw in items:
         desc = (raw.get("description") or "").strip()
         qty = int(raw.get("quantity") or 0)
-        unit_price = _quantize_money(Decimal(str(raw.get("unit_price") or "0.00")))
-        gst_rate = Decimal(str(raw.get("gst_rate_percent") or "0.00"))
-        if not desc or qty <= 0 or unit_price < Decimal("0.00"):
-            raise ValueError("Each line item requires a description, positive quantity, and non-negative unit price.")
 
-        line_base = _quantize_money(unit_price * Decimal(qty))
-        line_gst = _quantize_money((line_base * gst_rate) / Decimal("100"))
-        line_total = _quantize_money(line_base + line_gst)
+        unit_price = _quantize_money(
+            Decimal(str(raw.get("unit_price") or "0.00"))
+        )
+
+        gst_rate = Decimal(
+            str(raw.get("gst_rate_percent") or "0.00")
+        )
+
+        if (
+            not desc
+            or qty <= 0
+            or unit_price < Decimal("0.00")
+            or gst_rate < Decimal("0.00")
+        ):
+            raise ValueError(
+                "Each line item requires a description, positive quantity, "
+                "and non-negative unit price and GST rate."
+            )
+
+        line_base = _quantize_money(
+            unit_price * Decimal(qty)
+        )
+
+        line_gst = _quantize_money(
+            (line_base * gst_rate) / Decimal("100")
+        )
+
+        line_total = _quantize_money(
+            line_base + line_gst
+        )
 
         InvoiceLineItem.objects.create(
             invoice=invoice,
             description=desc,
-            category=(raw.get("category") or "GENERAL").strip().upper(),
+            category=(
+                raw.get("category") or "GENERAL"
+            ).strip().upper(),
             quantity=qty,
             unit_price=unit_price,
             gst_rate_percent=gst_rate,
             line_total=line_total,
         )
+
         subtotal += line_base
         total_gst += line_gst
 
     gross = _quantize_money(subtotal + total_gst)
+
     if clean_discount > gross:
-        raise ValueError("Discount cannot exceed gross invoice amount.")
+        raise ValueError(
+            "Discount cannot exceed gross invoice amount."
+        )
 
     invoice.subtotal_amount = _quantize_money(subtotal)
     invoice.gst_amount = _quantize_money(total_gst)
-    invoice.total_amount = _quantize_money(gross - clean_discount)
-    invoice.save(update_fields=["subtotal_amount", "gst_amount", "total_amount", "updated_at"])
+    invoice.total_amount = _quantize_money(
+        gross - clean_discount
+    )
+
+    invoice.save(
+        update_fields=[
+            "subtotal_amount",
+            "gst_amount",
+            "total_amount",
+            "updated_at",
+        ]
+    )
 
     record_audit_log(
         action="billing.invoice.created",
@@ -100,9 +180,14 @@ def create_invoice_with_items(
         tenant_id=tenant_id,
         branch_id=invoice.branch_id,
         request=request,
-        metadata={"invoice_number": invoice.invoice_number, "total_amount": str(invoice.total_amount)},
+        metadata={
+            "invoice_number": invoice.invoice_number,
+            "total_amount": str(invoice.total_amount),
+        },
     )
+
     return invoice
+
 
 
 @transaction.atomic

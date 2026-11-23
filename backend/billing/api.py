@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from clinic.models import Patient
 from core.permissions import LicenseWriteAndModulePermission
+from core.scoping import resolve_scoped_branch_id, validate_patient_branch_alignment
 from tenants.models import ModuleCode
 from .models import ExpenseEntry, Invoice
 from .serializers import ExpenseEntrySerializer, InvoiceSerializer, PaymentTransactionSerializer
@@ -19,19 +20,50 @@ class InvoiceListCreateAPIView(APIView):
         tenant_id = getattr(request.user, "tenant_id", None)
         if not tenant_id:
             return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
+
         qs = Invoice.objects.prefetch_related("items", "payments").filter(tenant_id=tenant_id)
+        raw_branch_id = request.query_params.get("branch_id")
+        if raw_branch_id:
+            try:
+                scoped_branch_id = resolve_scoped_branch_id(
+                    tenant_id=tenant_id,
+                    requested_branch_id=raw_branch_id,
+                )
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            qs = qs.filter(branch_id=scoped_branch_id)
+
         return Response(InvoiceSerializer(qs, many=True).data, status=status.HTTP_200_OK)
 
     def post(self, request):
         tenant_id = getattr(request.user, "tenant_id", None)
         if not tenant_id:
             return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            scoped_branch_id = resolve_scoped_branch_id(
+                tenant_id=tenant_id,
+                requested_branch_id=request.data.get("branch_id"),
+                fallback_branch_id=getattr(request.user, "primary_branch_id", None),
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         patient = None
         patient_id = request.data.get("patient_id") or request.data.get("patient")
         if patient_id:
             patient = Patient.objects.filter(id=patient_id, tenant_id=tenant_id).first()
             if not patient:
                 return Response({"detail": "Patient not found in your organization."}, status=status.HTTP_404_NOT_FOUND)
+            try:
+                validate_patient_branch_alignment(
+                    tenant_id=tenant_id,
+                    patient=patient,
+                    branch_id=scoped_branch_id,
+                )
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             inv = create_invoice_with_items(
                 tenant_id=tenant_id,
@@ -39,7 +71,7 @@ class InvoiceListCreateAPIView(APIView):
                 customer_name=request.data.get("customer_name") or "",
                 items=request.data.get("items") or [],
                 discount_amount=Decimal(str(request.data.get("discount_amount") or "0.00")),
-                branch_id=getattr(request.user, "primary_branch_id", None),
+                branch_id=scoped_branch_id or (patient.branch_id if patient else None),
                 notes=request.data.get("notes") or "",
                 actor=request.user,
                 request=request,
@@ -80,8 +112,22 @@ class ExpenseLedgerAPIView(APIView):
         tenant_id = getattr(request.user, "tenant_id", None)
         if not tenant_id:
             return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
+
+        raw_branch_id = request.query_params.get("branch_id")
+        scoped_branch_id = None
+        if raw_branch_id:
+            try:
+                scoped_branch_id = resolve_scoped_branch_id(
+                    tenant_id=tenant_id,
+                    requested_branch_id=raw_branch_id,
+                )
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         expenses = ExpenseEntry.objects.filter(tenant_id=tenant_id)
-        summary = summarize_finance(tenant_id=tenant_id)
+        if scoped_branch_id:
+            expenses = expenses.filter(branch_id=scoped_branch_id)
+        summary = summarize_finance(tenant_id=tenant_id, branch_id=scoped_branch_id)
         return Response(
             {
                 "summary": {k: str(v) for k, v in summary.items()},
@@ -94,6 +140,16 @@ class ExpenseLedgerAPIView(APIView):
         tenant_id = getattr(request.user, "tenant_id", None)
         if not tenant_id:
             return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            scoped_branch_id = resolve_scoped_branch_id(
+                tenant_id=tenant_id,
+                requested_branch_id=request.data.get("branch_id"),
+                fallback_branch_id=getattr(request.user, "primary_branch_id", None),
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             exp = record_expense(
                 tenant_id=tenant_id,
@@ -102,7 +158,7 @@ class ExpenseLedgerAPIView(APIView):
                 category=request.data.get("category") or "OPERATIONAL",
                 vendor_name=request.data.get("vendor_name") or "",
                 notes=request.data.get("notes") or "",
-                branch_id=getattr(request.user, "primary_branch_id", None),
+                branch_id=scoped_branch_id,
                 actor=request.user,
                 request=request,
             )

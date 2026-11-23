@@ -67,36 +67,54 @@ class IPDAdmissionListCreateAPIView(APIView):
         tenant_id = getattr(request.user, "tenant_id", None)
         if not tenant_id:
             return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
-        qs = (
-            IPDAdmission.objects.select_related("patient", "ward", "bed")
-            .prefetch_related("round_notes", "billing_items")
-            .filter(tenant_id=tenant_id)
-        )
+
+        qs = IPDAdmission.objects.select_related("patient", "ward", "bed").filter(tenant_id=tenant_id)
+        raw_branch_id = request.query_params.get("branch_id")
+        if raw_branch_id:
+            try:
+                scoped_branch_id = resolve_scoped_branch_id(
+                    tenant_id=tenant_id,
+                    requested_branch_id=raw_branch_id,
+                )
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            qs = qs.filter(branch_id=scoped_branch_id)
+
         return Response(IPDAdmissionSerializer(qs, many=True).data, status=status.HTTP_200_OK)
 
     def post(self, request):
         tenant_id = getattr(request.user, "tenant_id", None)
         if not tenant_id:
             return Response({"detail": "No tenant context found."}, status=status.HTTP_403_FORBIDDEN)
-        patient = Patient.objects.filter(
-            id=request.data.get("patient_id") or request.data.get("patient"),
-            tenant_id=tenant_id,
-        ).first()
-        if not patient:
-            return Response({"detail": "Patient not found in your organization."}, status=status.HTTP_404_NOT_FOUND)
+
         try:
-            adm = admit_patient_to_bed(
+            scoped_branch_id = resolve_scoped_branch_id(
+                tenant_id=tenant_id,
+                requested_branch_id=request.data.get("branch_id"),
+                fallback_branch_id=getattr(request.user, "primary_branch_id", None),
+            )
+            patient_id = request.data.get("patient_id") or request.data.get("patient")
+            patient = Patient.objects.filter(id=patient_id, tenant_id=tenant_id).first() if patient_id else None
+            if not patient:
+                return Response({"detail": "Valid patient_id in your organization is required."}, status=status.HTTP_400_BAD_REQUEST)
+            validate_patient_branch_alignment(
                 tenant_id=tenant_id,
                 patient=patient,
-                bed_id=request.data.get("bed_id") or request.data.get("bed"),
-                admission_reason=request.data.get("admission_reason") or "",
-                branch_id=getattr(request.user, "primary_branch_id", None),
+                branch_id=scoped_branch_id,
+            )
+            admission = admit_patient_to_bed(
+                tenant_id=tenant_id,
+                patient=patient,
+                bed_id=request.data.get("bed_id"),
+                admission_reason=request.data.get("admission_reason") or "IPD Admission",
+                branch_id=scoped_branch_id,
                 actor=request.user,
                 request=request,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(IPDAdmissionSerializer(adm).data, status=status.HTTP_201_CREATED)
+
+        return Response(IPDAdmissionSerializer(admission).data, status=status.HTTP_201_CREATED)
 
 
 class IPDAdmissionActionAPIView(APIView):
