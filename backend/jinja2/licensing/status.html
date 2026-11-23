@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OneCare HMS — Subscription & License</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6">
+  <div class="max-w-3xl mx-auto space-y-6">
+    <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+      <div>
+        <p class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">OneCare HMS Licensing</p>
+        <h1 class="text-xl font-bold text-white">Installation & Subscription Status</h1>
+      </div>
+      <a href="{{ url('tenants-overview') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-medium">
+        Organization Overview
+      </a>
+    </div>
+
+    {% if feedback %}
+    <div class="rounded-lg border {{ 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' if ok else 'border-rose-500/40 bg-rose-500/10 text-rose-200' }} p-4 text-xs">
+      {{ feedback }}
+    </div>
+    {% endif %}
+
+    {% if license %}
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3 text-xs">
+      <div class="flex items-center justify-between">
+        <span class="text-slate-400">Installation ID</span>
+        <span class="font-mono text-slate-200">{{ license.installation_id }}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-slate-400">Current Status</span>
+        <span class="px-2.5 py-0.5 rounded font-semibold {{ 'bg-emerald-500/15 text-emerald-300' if license.is_write_allowed else 'bg-amber-500/15 text-amber-300' }}">
+          {{ license.get_status_display() }}
+        </span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-slate-400">Trial Expires</span>
+        <span>{{ license.trial_expires_at }}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-slate-400">Licensed Expiry</span>
+        <span>{{ license.license_expires_at or 'Not yet activated' }}</span>
+      </div>
+    </div>
+
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+      <h2 class="font-semibold text-white text-sm">Activate or Renew Signed License Token</h2>
+      <p class="text-xs text-slate-400">
+        When expired, OneCare HMS enters Patient-Data-Safe Restricted Mode: existing patient records and exports remain accessible while new operational writes require renewal.
+      </p>
+      <form method="post" class="space-y-3">
+        {{ csrf_input }}
+        <textarea name="signed_token" rows="3" required placeholder="Paste signed license token..."
+                  class="w-full rounded-lg bg-slate-950 border border-slate-700 p-3 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none"></textarea>
+        <button type="submit" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-xs font-semibold text-white">
+          Activate License
+        </button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+
+  {{ locked_footer() | safe }}
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OneCare HMS — Smart Pharmacy & FEFO POS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6" x-data="{ tab: 'batches' }">
+  <div class="max-w-6xl mx-auto space-y-6">
+    <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div>
+        <p class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">OneCare HMS · Pharmacy Workspace</p>
+        <h1 class="text-xl font-bold text-white">FEFO Batch Stock, Salt Search & GST Billing</h1>
+      </div>
+      <div class="flex gap-2 text-xs">
+        <a href="?export=csv" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2 text-emerald-300 font-semibold">Export Sales CSV</a>
+        <a href="{{ url('tenants-overview') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">Organization</a>
+        <a href="{{ url('accounts-logout') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">Sign Out</a>
+      </div>
+    </div>
+
+    {% if feedback %}
+    <div class="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-200">{{ feedback }}</div>
+    {% endif %}
+    {% if error %}
+    <div class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">{{ error }}</div>
+    {% endif %}
+
+    <!-- Search by Brand / Generic / Salt -->
+    <form method="get" class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex gap-3 text-xs">
+      <input type="text" name="q" value="{{ query }}" placeholder="Search by medicine brand, generic name, or salt composition..."
+             class="flex-1 rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-white" />
+      <button type="submit" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 font-semibold text-white">Search</button>
+    </form>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+      <!-- Add Stock Batch -->
+      <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2.5">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="add_batch" />
+        <h2 class="font-semibold text-white text-sm">Add Medicine & Batch Stock</h2>
+        <input type="text" name="brand_name" required placeholder="Brand Name (e.g., Dolo 650)" class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        <input type="text" name="salt_composition" placeholder="Salt Composition (e.g., Paracetamol 650mg)" class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        <div class="grid grid-cols-2 gap-2">
+          <input type="text" name="batch_number" required placeholder="Batch No." class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+          <input type="date" name="expiry_date" required class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <input type="number" name="quantity" min="1" required placeholder="Qty" class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+          <input type="number" step="0.01" name="mrp" required placeholder="MRP (₹)" class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+          <input type="number" step="0.01" name="gst_rate_percent" value="12.00" placeholder="GST %" class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        </div>
+        <label class="flex items-center gap-2 text-slate-400">
+          <input type="checkbox" name="is_controlled_drug" /> Controlled / Schedule audit item
+        </label>
+        <button type="submit" class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 py-2 font-semibold text-white">Save Batch</button>
+      </form>
+
+      <!-- FEFO POS Dispensing -->
+      <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2.5">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="dispense_sale" />
+        <h2 class="font-semibold text-white text-sm">FEFO POS Billing</h2>
+        <select name="medicine_id" required class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5">
+          <option value="">Select Medicine</option>
+          {% for m in medicines %}
+          <option value="{{ m.id }}">{{ m.brand_name }} — {{ m.salt_composition or m.generic_name }}</option>
+          {% endfor %}
+        </select>
+        <div class="grid grid-cols-2 gap-2">
+          <input type="number" name="quantity" min="1" required placeholder="Quantity" class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+          <input type="text" name="customer_name" placeholder="Patient / Customer Name" class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        </div>
+        <button type="submit" class="w-full rounded-lg bg-slate-800 hover:bg-slate-700 py-2 font-semibold text-white">Dispense (Earliest Expiry First)</button>
+      </form>
+    </div>
+
+    <!-- Batches & Sales Tabs -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3 text-xs">
+      <div class="flex gap-4 border-b border-slate-800 pb-2">
+        <button type="button" @click="tab = 'batches'" :class="tab === 'batches' ? 'text-emerald-400 font-semibold' : 'text-slate-400'">
+          Batches ({{ batches|length }})
+        </button>
+        <button type="button" @click="tab = 'sales'" :class="tab === 'sales' ? 'text-emerald-400 font-semibold' : 'text-slate-400'">
+          GST Invoices ({{ sales|length }})
+        </button>
+      </div>
+
+      <div x-show="tab === 'batches'" class="space-y-2">
+        {% for b in batches %}
+        <div class="rounded-lg bg-slate-950 border border-slate-800 px-4 py-2.5 flex items-center justify-between">
+          <div>
+            <span class="font-semibold text-white">{{ b.medicine.brand_name }}</span>
+            <span class="text-slate-400">· Batch {{ b.batch_number }} · Exp: {{ b.expiry_date }}</span>
+          </div>
+          <span class="font-mono {{ 'text-rose-400' if b.is_expired else 'text-emerald-300' }}">
+            Qty: {{ b.quantity_on_hand }} · MRP ₹{{ b.mrp }}
+          </span>
+        </div>
+        {% else %}
+        <p class="text-slate-400">No medicine batches added yet.</p>
+        {% endfor %}
+      </div>
+
+      <div x-show="tab === 'sales'" class="space-y-2">
+        {% for s in sales %}
+        <div class="rounded-lg bg-slate-950 border border-slate-800 px-4 py-2 flex items-center justify-between">
+          <span><strong class="text-white">{{ s.invoice_number }}</strong> — {{ s.customer_name or 'Walk-in' }}</span>
+          <span class="font-mono text-emerald-300">₹{{ s.total_amount }} (GST ₹{{ s.gst_amount }})</span>
+        </div>
+        {% else %}
+        <p class="text-slate-400">No pharmacy invoices recorded yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {{ locked_footer() | safe }}
+</body>
+</html>

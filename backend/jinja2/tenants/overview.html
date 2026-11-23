@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OneCare HMS — Organization & Modules</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6" x-data="{ filter: 'ALL' }">
+  <div class="max-w-5xl mx-auto space-y-6">
+    <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+      <div>
+        <p class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">OneCare HMS</p>
+        <h1 class="text-xl font-bold text-white">{{ tenant.name if tenant else 'Unassigned Organization' }}</h1>
+        <p class="text-xs text-slate-400">Slug: {{ tenant.slug if tenant else 'N/A' }} · GSTIN: {{ tenant.gstin or 'Not set' }}</p>
+      </div>
+      <div class="flex gap-2">
+        <a href="{{ url('accounts-security') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-medium">
+          Security & 2FA
+        </a>
+        <a href="{{ url('accounts-logout') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-medium">
+          Sign Out
+        </a>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+        <h2 class="font-semibold text-white">Branches ({{ branches|length }})</h2>
+        <div class="space-y-2">
+          {% for b in branches %}
+          <div class="rounded-lg bg-slate-950 border border-slate-800 px-4 py-2.5 text-xs flex items-center justify-between">
+            <div>
+              <p class="font-medium text-slate-200">{{ b.name }} <span class="text-slate-400">({{ b.code }})</span></p>
+              <p class="text-slate-400">{{ b.address or 'Address not set' }}</p>
+            </div>
+            <span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-medium">
+              {{ 'Main' if b.is_main else 'Branch' }}
+            </span>
+          </div>
+          {% else %}
+          <p class="text-xs text-slate-400">No branches configured yet.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold text-white">Module Entitlements</h2>
+          <div class="flex gap-1 text-xs">
+            <button type="button" @click="filter = 'ALL'" class="px-2 py-1 rounded bg-slate-800">All</button>
+            <button type="button" @click="filter = 'ENABLED'" class="px-2 py-1 rounded bg-slate-800">Enabled</button>
+          </div>
+        </div>
+        <div class="space-y-2">
+          {% for m in entitlements %}
+          <div x-show="filter === 'ALL' || {{ 'true' if m.is_enabled else 'false' }}"
+               class="rounded-lg bg-slate-950 border border-slate-800 px-4 py-2 text-xs flex items-center justify-between">
+            <span class="font-medium text-slate-200">{{ m.get_module_code_display() }}</span>
+            <span class="px-2 py-0.5 rounded {{ 'bg-emerald-500/15 text-emerald-300' if m.is_enabled else 'bg-slate-800 text-slate-400' }}">
+              {{ 'Enabled' if m.is_enabled else 'Disabled' }}
+            </span>
+          </div>
+          {% else %}
+          <p class="text-xs text-slate-400">No module entitlements found.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {{ locked_footer() | safe }}
+</body>
+</html>

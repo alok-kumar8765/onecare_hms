@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OneCare HMS — Sign In</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
+  <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl" x-data="{ showPassword: false }">
+    <div class="mb-6">
+      <p class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">OneCare HMS</p>
+      <h1 class="text-2xl font-bold text-white mt-1">Healthcare Workspace Login</h1>
+      <p class="text-sm text-slate-400 mt-1">Sign in with your account credentials and 2FA when enabled.</p>
+    </div>
+
+    {% if new_device_alert %}
+    <div class="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+      New device/browser detected for this login. You can approve or review active devices inside Security Settings.
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="mb-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="{{ url('accounts-login') }}" class="space-y-4">
+      {{ csrf_input }}
+      <div>
+        <label class="block text-xs font-medium text-slate-300 mb-1">Username</label>
+        <input type="text" name="username" value="{{ pending_username or '' }}" required
+               class="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none" />
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-300 mb-1">Password</label>
+        <div class="relative">
+          <input :type="showPassword ? 'text' : 'password'" name="password" required
+                 class="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none" />
+          <button type="button" @click="showPassword = !showPassword"
+                  class="absolute right-2.5 top-2 text-xs text-slate-400 hover:text-white">
+            <span x-text="showPassword ? 'Hide' : 'Show'"></span>
+          </button>
+        </div>
+      </div>
+
+      {% if require_2fa %}
+      <div>
+        <label class="block text-xs font-medium text-emerald-300 mb-1">Authenticator 2FA Code</label>
+        <input type="text" name="totp_code" inputmode="numeric" maxlength="6" placeholder="123456"
+               class="w-full rounded-lg bg-slate-950 border border-emerald-600 px-3 py-2 text-sm text-white tracking-widest focus:outline-none" />
+      </div>
+      {% endif %}
+
+      <button type="submit"
+              class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 text-sm transition">
+        Sign In
+      </button>
+    </form>
+  </div>
+
+  <div class="fixed bottom-0 left-0 right-0">
+    {{ locked_footer() | safe }}
+  </div>
+</body>
+</html>

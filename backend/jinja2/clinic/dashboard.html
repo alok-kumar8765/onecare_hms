@@ -1,0 +1,430 @@
+
+<!-- backend/jinja2/clinic/dashboard.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OneCare HMS — Clinic, OPD & EMR</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6" x-data="{ tab: 'encounters' }">
+
+  <div class="max-w-6xl mx-auto space-y-6">
+
+    <!-- Top Navigation Bar -->
+    <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div>
+        <p class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">
+          OneCare HMS · Clinic Workspace
+        </p>
+        <h1 class="text-xl font-bold text-white">
+          OPD, EMR, Prescriptions & Records
+        </h1>
+      </div>
+
+      <div class="flex flex-wrap gap-2 text-xs">
+        <a href="{{ url('clinic-dashboard') }}"
+           class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-2">
+          Clinic
+        </a>
+
+        <a href="{{ url('pharmacy-dashboard') }}"
+           class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">
+          Pharmacy
+        </a>
+
+        <a href="{{ url('laboratory-dashboard') }}"
+           class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">
+          Laboratory
+        </a>
+
+        <a href="{{ url('tenants-overview') }}"
+           class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">
+          Organization
+        </a>
+
+        <a href="{{ url('accounts-security') }}"
+           class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">
+          Security & 2FA
+        </a>
+
+        <a href="{{ url('accounts-logout') }}"
+           class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">
+          Sign Out
+        </a>
+      </div>
+    </div>
+
+    {% if feedback %}
+    <div class="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-200">
+      {{ feedback }}
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <!-- Period, Doctor & Custom Date Filter + CSV Export -->
+    <form method="get" class="bg-slate-900 border border-slate-800 rounded-xl p-4 grid grid-cols-1 md:grid-cols-6 gap-3 text-xs items-end">
+
+      <div>
+        <label class="block text-slate-400 mb-1">Time Period</label>
+        <select name="period" class="w-full rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-white">
+          <option value="all" {{ 'selected' if period == 'all' else '' }}>All Records</option>
+          <option value="this_month" {{ 'selected' if period == 'this_month' else '' }}>This Month</option>
+          <option value="this_year" {{ 'selected' if period == 'this_year' else '' }}>This Year</option>
+          <option value="previous_year" {{ 'selected' if period == 'previous_year' else '' }}>Previous Year</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-slate-400 mb-1">Doctor</label>
+        <select name="doctor_id" class="w-full rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-white">
+          <option value="">All Doctors</option>
+          {% for doc in doctors %}
+          <option value="{{ doc.id }}" {{ 'selected' if selected_doctor_id == doc.id|string else '' }}>
+            {{ doc.get_full_name() or doc.username }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-slate-400 mb-1">From Date</label>
+        <input type="date" name="start_date" value="{{ start_date }}" class="w-full rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-white" />
+      </div>
+
+      <div>
+        <label class="block text-slate-400 mb-1">To Date</label>
+        <input type="date" name="end_date" value="{{ end_date }}" class="w-full rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-white" />
+      </div>
+
+      <button type="submit" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 font-semibold text-white">
+        Apply Filter
+      </button>
+
+      <a href="?period={{ period }}&doctor_id={{ selected_doctor_id }}&start_date={{ start_date }}&end_date={{ end_date }}&export=csv"
+         class="text-center rounded-lg bg-slate-800 hover:bg-slate-700 px-4 py-2 font-semibold text-emerald-300">
+        Export CSV
+      </a>
+    </form>
+
+    <!-- Bar Graph Visualization (Chart.js) -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+      <h2 class="text-sm font-semibold text-white mb-3">
+        Monthly OPD Consultation Bar Graph
+      </h2>
+      <div class="h-56">
+        <canvas id="opdBarChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Registration, Queue & Consultation Forms -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 text-xs">
+
+      <form method="post" enctype="multipart/form-data" class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="register_patient" />
+
+        <h3 class="font-semibold text-white text-sm">
+          1. Register Patient (+ Photo)
+        </h3>
+
+        <input type="text" name="full_name" required placeholder="Patient Full Name" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
+
+        <div class="grid grid-cols-2 gap-2">
+          <select name="gender" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5">
+            <option value="MALE">Male</option>
+            <option value="FEMALE">Female</option>
+            <option value="OTHER">Other</option>
+          </select>
+
+          <input type="text" name="phone_number" placeholder="Phone (+91...)" class="rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
+        </div>
+
+        <input type="date" name="date_of_birth" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
+
+        <input type="file" name="photo" accept="image/*" class="w-full text-slate-400" />
+
+        <label class="flex items-center gap-2 text-slate-400">
+          <input type="checkbox" name="allow_duplicate" />
+          Allow duplicate record if matched
+        </label>
+
+        <button type="submit" class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 py-2 font-semibold text-white">
+          Save Patient
+        </button>
+      </form>
+
+      <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="book_appointment" />
+
+        <h3 class="font-semibold text-white text-sm">
+          2. OPD Queue / Token
+        </h3>
+
+        <select name="patient_id" required class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5">
+          <option value="">Select Patient</option>
+          {% for p in patients %}
+          <option value="{{ p.id }}">{{ p.uhid }} — {{ p.full_name }}</option>
+          {% endfor %}
+        </select>
+
+        <select name="doctor_id" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5">
+          <option value="">Assign Doctor (Optional)</option>
+          {% for doc in doctors %}
+          <option value="{{ doc.id }}">{{ doc.get_full_name() or doc.username }}</option>
+          {% endfor %}
+        </select>
+
+        <input type="text" name="reason" placeholder="Visit reason / symptoms" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
+
+        <button type="submit" class="w-full rounded-lg bg-slate-800 hover:bg-slate-700 py-2 font-semibold text-white">
+          Generate Token
+        </button>
+      </form>
+
+      <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="record_encounter" />
+
+        <h3 class="font-semibold text-white text-sm">
+          3. Doctor EMR & Prescription
+        </h3>
+
+        <select name="patient_id" required class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5">
+          <option value="">Select Patient</option>
+          {% for p in patients %}
+          <option value="{{ p.id }}">{{ p.uhid }} — {{ p.full_name }}</option>
+          {% endfor %}
+        </select>
+
+        <input type="text" name="chief_complaint" required placeholder="Chief complaint" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
+
+        <input type="text" name="diagnosis" placeholder="Diagnosis" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
+
+        <input type="text" name="medicine_name" placeholder="Prescription medicine (optional)" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
+
+        <button type="submit" class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 py-2 font-semibold text-white">
+          Save Consultation
+        </button>
+      </form>
+
+    </div>
+
+    <!-- Filtered Encounters, Today's Queue & Registered Patients -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3 text-xs">
+
+      <!-- Tabs -->
+      <div class="flex flex-wrap gap-3 border-b border-slate-800 pb-2">
+
+        <button type="button"
+                @click="tab = 'encounters'"
+                :class="tab === 'encounters' ? 'text-emerald-400 font-semibold' : 'text-slate-400'">
+          Filtered Encounters ({{ encounters|length }})
+        </button>
+
+        <button type="button"
+                @click="tab = 'queue'"
+                :class="tab === 'queue' ? 'text-emerald-400 font-semibold' : 'text-slate-400'">
+          Today's Queue ({{ appointments|length }})
+        </button>
+
+        <button type="button"
+                @click="tab = 'patients'"
+                :class="tab === 'patients' ? 'text-emerald-400 font-semibold' : 'text-slate-400'">
+          Registered Patients ({{ patients|length }})
+        </button>
+
+      </div>
+
+      <!-- Filtered Encounters -->
+      <div x-show="tab === 'encounters'" class="space-y-2">
+
+        {% for enc in encounters %}
+        <div class="rounded-lg bg-slate-950 border border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <span class="font-semibold text-white">{{ enc.patient.full_name }}</span>
+
+            <span class="text-slate-400">
+              ({{ enc.patient.uhid }}) · {{ enc.encounter_date }}
+            </span>
+
+            <p class="text-slate-300 mt-0.5">
+              Complaint: {{ enc.chief_complaint }}
+              {% if enc.diagnosis %}
+              · Diagnosis: {{ enc.diagnosis }}
+              {% endif %}
+            </p>
+          </div>
+
+          <span class="text-emerald-300">
+            {{ enc.doctor.get_full_name() or enc.doctor.username if enc.doctor else 'Unassigned' }}
+          </span>
+        </div>
+
+        {% else %}
+        <p class="text-slate-400">
+          No consultation records match the selected filter.
+        </p>
+        {% endfor %}
+
+      </div>
+
+      <!-- Today's Queue -->
+      <div x-show="tab === 'queue'" class="space-y-2">
+
+        {% for appt in appointments %}
+        <div class="rounded-lg bg-slate-950 border border-slate-800 px-4 py-2 flex items-center justify-between">
+          <span>
+            <strong class="text-emerald-300">#{{ appt.token_number }}</strong>
+            — {{ appt.patient.full_name }} ({{ appt.visit_date }})
+          </span>
+
+          <span class="text-slate-400">
+            {{ appt.get_status_display() }}
+          </span>
+        </div>
+
+        {% else %}
+        <p class="text-slate-400">
+          No appointments scheduled.
+        </p>
+        {% endfor %}
+
+      </div>
+
+      <!-- Registered Patients -->
+      <div x-show="tab === 'patients'" class="space-y-3">
+
+        <h3 class="text-sm font-semibold text-white">
+          Registered Patients
+        </h3>
+
+        {% if last_saved_patient %}
+        <div class="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-emerald-200">
+          <p class="font-semibold mb-2">
+            Patient Saved Successfully!
+          </p>
+
+          <p>
+            Database ID: {{ last_saved_patient.id }}
+          </p>
+
+          <p>
+            UHID: {{ last_saved_patient.uhid }}
+          </p>
+
+          <p>
+            Patient Name: {{ last_saved_patient.full_name }}
+          </p>
+
+          <p>
+            Phone: {{ last_saved_patient.phone_number or 'N/A' }}
+          </p>
+        </div>
+        {% endif %}
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+
+            <thead>
+              <tr class="bg-slate-800 text-slate-300">
+                <th class="p-3">Database ID</th>
+                <th class="p-3">UHID</th>
+                <th class="p-3">Patient Name</th>
+                <th class="p-3">Phone Number</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {% for patient in patients %}
+              <tr class="border-b border-slate-800 hover:bg-slate-800/50">
+
+                <td class="p-3 text-slate-400">
+                  {{ patient.id }}
+                </td>
+
+                <td class="p-3 text-emerald-400 font-semibold">
+                  {{ patient.uhid }}
+                </td>
+
+                <td class="p-3 text-white">
+                  {{ patient.full_name }}
+                </td>
+
+                <td class="p-3 text-slate-300">
+                  {{ patient.phone_number or 'N/A' }}
+                </td>
+
+              </tr>
+
+              {% else %}
+              <tr>
+                <td colspan="4" class="p-4 text-center text-slate-400">
+                  No registered patients found.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+
+          </table>
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    const ctx = document.getElementById('opdBarChart');
+
+    if (ctx) {
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: {{ chart_labels | tojson }},
+          datasets: [{
+            label: 'OPD Consultations',
+            data: {{ chart_values | tojson }},
+            backgroundColor: '#10b981',
+            borderRadius: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              labels: { color: '#cbd5e1' }
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: '#94a3b8' },
+              grid: { color: '#1e293b' }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { color: '#94a3b8', precision: 0 },
+              grid: { color: '#1e293b' }
+            }
+          }
+        }
+      });
+    }
+  </script>
+
+  {{ locked_footer() | safe }}
+
+</body>
+</html>

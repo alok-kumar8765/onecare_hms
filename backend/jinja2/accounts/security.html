@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OneCare HMS — Account Security & 2FA</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6">
+  <div class="max-w-4xl mx-auto space-y-6">
+    <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+      <div>
+        <h1 class="text-xl font-bold text-white">Account Security & 2FA</h1>
+        <p class="text-xs text-slate-400">Signed in as {{ user_obj.username }} ({{ user_obj.get_role_display() }})</p>
+      </div>
+      <a href="{{ url('accounts-logout') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-medium">
+        Sign Out
+      </a>
+    </div>
+
+    {% if mock_otp_preview %}
+    <div class="rounded-lg border border-sky-500/40 bg-sky-500/10 p-4 text-sm text-sky-200">
+      Dev Mock WhatsApp OTP generated for {{ user_obj.phone_number or 'account' }}: <strong class="font-mono">{{ mock_otp_preview }}</strong>
+    </div>
+    {% endif %}
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+        <h2 class="font-semibold text-white">Authenticator App (TOTP)</h2>
+        <p class="text-xs text-slate-400">Add this key to your authenticator app and verify a 6-digit code:</p>
+        <div class="rounded bg-slate-950 border border-slate-800 p-2.5 font-mono text-xs text-emerald-300 break-all">
+          {{ totp_secret }}
+        </div>
+        <form method="post" class="flex gap-2">
+          {{ csrf_input }}
+          <input type="hidden" name="action" value="enable_totp" />
+          <input type="text" name="totp_code" maxlength="6" placeholder="6-digit code" required
+                 class="flex-1 rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm" />
+          <button type="submit" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-xs font-semibold">
+            Verify & Enable
+          </button>
+        </form>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+        <h2 class="font-semibold text-white">WhatsApp Verification (Dev Mock)</h2>
+        <p class="text-xs text-slate-400">Uses zero-cost mock adapter in development; switches to WhatsApp Business API in production.</p>
+        <form method="post">
+          {{ csrf_input }}
+          <input type="hidden" name="action" value="send_mock_whatsapp_otp" />
+          <button type="submit" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-4 py-2 text-xs font-semibold">
+            Send Mock WhatsApp OTP
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+      <h2 class="font-semibold text-white mb-3">Known Devices & Login Alerts</h2>
+      <div class="space-y-2">
+        {% for d in devices %}
+        <div class="flex items-center justify-between rounded-lg bg-slate-950 border border-slate-800 px-4 py-2.5 text-xs">
+          <div>
+            <p class="font-medium text-slate-200">{{ d.device_label }}</p>
+            <p class="text-slate-400">IP: {{ d.ip_address or 'N/A' }} · Trusted: {{ 'Yes' if d.is_trusted else 'No (Alert)' }}</p>
+          </div>
+          {% if not d.is_trusted %}
+          <form method="post">
+            {{ csrf_input }}
+            <input type="hidden" name="action" value="approve_device" />
+            <input type="hidden" name="device_id" value="{{ d.id }}" />
+            <button type="submit" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 font-semibold">
+              Approve Device
+            </button>
+          </form>
+          {% endif %}
+        </div>
+        {% else %}
+        <p class="text-xs text-slate-400">No devices recorded yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {{ locked_footer() | safe }}
+</body>
+</html>

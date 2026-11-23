@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OneCare HMS — Hospital & IPD Management</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6">
+  <div class="max-w-6xl mx-auto space-y-6">
+    <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div>
+        <p class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">OneCare HMS · Inpatient & Ward Workspace</p>
+        <h1 class="text-xl font-bold text-white">Wards, Beds, Admissions, Rounds & Discharge Billing</h1>
+      </div>
+      <div class="flex gap-2 text-xs">
+        <a href="?export=csv" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2 text-emerald-300 font-semibold">Export IPD CSV</a>
+        <a href="{{ url('tenants-overview') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">Organization</a>
+        <a href="{{ url('accounts-logout') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">Sign Out</a>
+      </div>
+    </div>
+
+    {% if feedback %}
+    <div class="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-200">{{ feedback }}</div>
+    {% endif %}
+    {% if error %}
+    <div class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">{{ error }}</div>
+    {% endif %}
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+      <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2.5">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="create_ward" />
+        <h2 class="font-semibold text-white text-sm">Create Ward & Beds</h2>
+        <div class="grid grid-cols-2 gap-2">
+          <input type="text" name="code" required placeholder="Code (e.g., ICU-1)" class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+          <input type="text" name="name" required placeholder="Ward Name" class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <select name="ward_type" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5">
+            {% for val, label in ward_types %}
+            <option value="{{ val }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+          <input type="number" step="0.01" name="daily_charge" value="1500.00" placeholder="Daily ₹" class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+          <input type="number" min="0" name="bed_count" value="2" placeholder="Beds" class="rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        </div>
+        <button type="submit" class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 py-2 font-semibold text-white">Save Ward & Beds</button>
+      </form>
+
+      <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2.5">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="admit_patient" />
+        <h2 class="font-semibold text-white text-sm">Admit Patient to Available Bed</h2>
+        <select name="patient_id" required class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5">
+          <option value="">Select Patient</option>
+          {% for p in patients %}
+          <option value="{{ p.id }}">{{ p.uhid }} — {{ p.full_name }}</option>
+          {% endfor %}
+        </select>
+        <select name="bed_id" required class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5">
+          <option value="">Select Available Bed</option>
+          {% for b in available_beds %}
+          <option value="{{ b.id }}">{{ b.ward.code }} / {{ b.bed_number }} (₹{{ b.ward.daily_charge }}/day)</option>
+          {% endfor %}
+        </select>
+        <input type="text" name="admission_reason" required placeholder="Admission diagnosis / reason" class="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5" />
+        <button type="submit" class="w-full rounded-lg bg-slate-800 hover:bg-slate-700 py-2 font-semibold text-white">Admit Patient</button>
+      </form>
+    </div>
+
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3 text-xs">
+      <h2 class="font-semibold text-white text-sm">IPD Admissions ({{ admissions|length }})</h2>
+      {% for adm in admissions %}
+      <div class="rounded-lg bg-slate-950 border border-slate-800 p-4 space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <span class="font-semibold text-white">{{ adm.admission_number }}</span>
+            <span class="text-slate-400">· {{ adm.patient.full_name }} · Bed: <strong class="text-emerald-300">{{ adm.bed.bed_number }}</strong> ({{ adm.ward.name }})</span>
+          </div>
+          <span class="px-2 py-0.5 rounded bg-slate-800 text-emerald-300">{{ adm.status }} · Total: ₹{{ adm.total_amount }}</span>
+        </div>
+        <p class="text-slate-300">Reason: {{ adm.admission_reason }}</p>
+        {% if adm.status == 'ADMITTED' %}
+        <form method="post" class="flex flex-wrap gap-2 pt-1">
+          {{ csrf_input }}
+          <input type="hidden" name="action" value="discharge" />
+          <input type="hidden" name="admission_id" value="{{ adm.id }}" />
+          <input type="text" name="discharge_summary" placeholder="Discharge summary..." class="flex-1 rounded bg-slate-900 border border-slate-700 px-2.5 py-1 text-white" />
+          <button type="submit" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1 font-semibold text-white">Discharge & Settle</button>
+        </form>
+        {% endif %}
+      </div>
+      {% else %}
+      <p class="text-slate-400">No IPD admissions recorded yet.</p>
+      {% endfor %}
+    </div>
+  </div>
+</body>
+</html>
