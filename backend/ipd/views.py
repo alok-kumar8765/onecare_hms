@@ -15,8 +15,8 @@ from .services import (
     create_ward_with_beds,
     discharge_ipd_patient,
     export_ipd_admissions_csv,
+    transfer_ipd_bed,
 )
-
 
 @login_required
 def ipd_dashboard_view(request):
@@ -93,6 +93,16 @@ def ipd_dashboard_view(request):
                     request=request,
                 )
                 feedback = f"Discharged {adm.admission_number} — Final Bill: ₹{adm.total_amount}."
+            elif action == "transfer_bed":
+                updated_adm = transfer_ipd_bed(
+                    tenant_id=tenant_id,
+                    admission_id=request.POST.get("admission_id"),
+                    target_bed_id=request.POST.get("target_bed_id"),
+                    transfer_reason=request.POST.get("transfer_reason") or "",
+                    actor=request.user,
+                    request=request,
+                )
+                feedback = f"Transferred {updated_adm.admission_number} to {updated_adm.ward.name}/{updated_adm.bed.bed_number}."
             elif action == "convert_to_invoice":
                 inv = create_invoice_from_ipd_admission(
                     tenant_id=tenant_id,

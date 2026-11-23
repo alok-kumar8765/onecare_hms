@@ -20,6 +20,13 @@ from .models import (
     WardType,
 )
 from core.scoping import resolve_scoped_branch_id, validate_patient_branch_alignment
+from math import ceil
+from django.db.models import Sum
+
+def _q(val: Decimal) -> Decimal:
+    return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -333,3 +340,125 @@ def export_ipd_admissions_csv(admissions_qs: QuerySet) -> str:
             "discharged_at": adm.discharged_at.isoformat() if adm.discharged_at else "",
         })
     return export_rows_to_csv(headers, rows)
+
+@transaction.atomic
+def transfer_ipd_bed(
+    *,
+    tenant_id,
+    admission_id,
+    target_bed_id,
+    transfer_reason: str = "",
+    actor=None,
+    request=None,
+) -> IPDAdmission:
+    """
+    Atomically transfers an admitted IPD patient from their current bed to an
+    AVAILABLE target bed within the same tenant (and branch if branch-scoped).
+    """
+    admission = (
+        IPDAdmission.objects.select_for_update()
+        .select_related("ward", "bed", "patient")
+        .filter(id=admission_id, tenant_id=tenant_id)
+        .first()
+    )
+    if not admission:
+        raise ValueError("IPD admission not found in your organization.")
+    if admission.status != AdmissionStatus.ADMITTED:
+        raise ValueError("Only currently admitted patients can be transferred to another bed.")
+
+    target_bed = (
+        Bed.objects.select_for_update()
+        .select_related("ward")
+        .filter(id=target_bed_id, tenant_id=tenant_id)
+        .first()
+    )
+    if not target_bed:
+        raise ValueError("Target bed not found in your organization.")
+    if str(target_bed.id) == str(admission.bed_id):
+        raise ValueError("Patient is already assigned to this bed.")
+    if target_bed.status != BedStatus.AVAILABLE or not target_bed.is_active:
+        raise ValueError("Target bed is not available for transfer.")
+    if (
+        admission.branch_id
+        and getattr(target_bed, "branch_id", None)
+        and str(admission.branch_id) != str(target_bed.branch_id)
+    ):
+        raise ValueError("Target bed belongs to a different branch than the admission.")
+
+    old_bed = admission.bed
+    old_label = f"{admission.ward.name}/{old_bed.bed_number}"
+    new_label = f"{target_bed.ward.name}/{target_bed.bed_number}"
+
+    old_bed.status = BedStatus.AVAILABLE
+    old_bed.save(update_fields=["status", "updated_at"])
+
+    target_bed.status = BedStatus.OCCUPIED
+    target_bed.save(update_fields=["status", "updated_at"])
+
+    admission.ward = target_bed.ward
+    admission.bed = target_bed
+    admission.save(update_fields=["ward", "bed", "updated_at"])
+
+    note_body = f"Bed Transfer: {old_label} -> {new_label}."
+    if transfer_reason.strip():
+        note_body = f"{note_body} Reason: {transfer_reason.strip()}"
+
+    IPDRoundNote.objects.create(
+        tenant_id=tenant_id,
+        branch_id=admission.branch_id,
+        admission=admission,
+        author=actor,
+        note=note_body,
+    )
+
+    record_audit_log(
+        action="ipd.bed_transferred",
+        resource_type="IPDAdmission",
+        resource_id=admission.id,
+        actor=actor,
+        tenant_id=tenant_id,
+        branch_id=admission.branch_id,
+        request=request,
+        metadata={
+            "admission_number": admission.admission_number,
+            "from_bed": old_label,
+            "to_bed": new_label,
+        },
+    )
+    return admission
+
+
+def compute_ipd_running_ledger(*, tenant_id, admission_id, as_of=None) -> dict:
+    """
+    Computes live accrued IPD room/bed charges plus itemized IPDBillingItem charges
+    for an active or discharged admission without mutating admission state.
+    """
+    admission = (
+        IPDAdmission.objects.select_related("ward", "bed")
+        .filter(id=admission_id, tenant_id=tenant_id)
+        .first()
+    )
+    if not admission:
+        raise ValueError("IPD admission not found in your organization.")
+
+    end_time = admission.discharged_at or as_of or timezone.now()
+    elapsed_seconds = max((end_time - admission.admitted_at).total_seconds(), 0)
+    billable_days = max(1, ceil(elapsed_seconds / 86400))
+    bed_charges = _q(Decimal(billable_days) * admission.ward.daily_charge)
+
+    items_subtotal = (
+        IPDBillingItem.objects.filter(admission=admission).aggregate(s=Sum("line_total"))["s"]
+        or Decimal("0.00")
+    )
+    items_subtotal = _q(items_subtotal)
+    running_total = _q(bed_charges + items_subtotal)
+
+    return {
+        "admission_number": admission.admission_number,
+        "status": admission.status,
+        "billable_days": billable_days,
+        "daily_charge": _q(admission.ward.daily_charge),
+        "accrued_bed_charges": bed_charges,
+        "itemized_charges": items_subtotal,
+        "running_total": running_total,
+    }
