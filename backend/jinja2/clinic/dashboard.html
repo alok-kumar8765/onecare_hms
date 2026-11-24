@@ -115,6 +115,100 @@
         Export CSV
       </a>
     </form>
+    
+    <!-- Database Backup & Restore: Admin / HR / Doctor Only -->
+    {% if user.is_superuser or user.role in ['ADMIN', 'HR', 'DOCTOR'] %}
+
+    <section class="rounded-xl border border-slate-800 bg-slate-900/70 p-4 mt-6">
+
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h3 class="text-sm font-semibold text-white">
+          Database Backup &amp; Restore
+        </h3>
+
+        <span class="text-[10px] uppercase tracking-wider text-emerald-400">
+          Authorized Access
+        </span>
+      </div>
+
+      <!-- Backup Actions -->
+      <div class="flex flex-wrap gap-2 mb-4">
+
+        <a href="/core/backup/download/"
+           class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white">
+          Download Backup (Local)
+        </a>
+
+        <form method="post" action="/core/backup/drive-upload/">
+          {{ csrf_input }}
+
+          <button type="submit"
+                  class="rounded bg-sky-600 hover:bg-sky-500 px-3 py-1.5 text-xs font-medium text-white">
+            Save to Google Drive
+          </button>
+        </form>
+
+      </div>
+
+      <div class="border-t border-slate-800 pt-3">
+
+        <p class="text-xs font-medium text-slate-300 mb-3">
+          Restore Database Backup
+        </p>
+
+        <form method="post"
+              action="/core/backup/restore/"
+              enctype="multipart/form-data"
+              class="space-y-2 text-xs">
+
+          {{ csrf_input }}
+
+          <!-- Local Backup File -->
+          <div>
+            <label class="block text-slate-400 mb-1">
+              Upload Local Backup
+            </label>
+
+            <input type="file"
+                   name="backup_file"
+                   accept=".sql,.sqlite3,.db,.zip"
+                   class="block w-full text-slate-300" />
+          </div>
+
+          <!-- Google Drive File ID -->
+          <div>
+            <input type="text"
+                   name="drive_file_id"
+                   placeholder="Or Google Drive File ID"
+                   class="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-white" />
+          </div>
+
+          <!-- Restore Confirmation -->
+          <label class="flex items-center gap-2 text-slate-300">
+            <input type="checkbox"
+                   name="confirm_restore"
+                   value="1"
+                   required />
+
+            <span>
+              I understand restoring will overwrite current database records.
+            </span>
+          </label>
+
+          <!-- Restore Button -->
+          <button type="submit"
+                  class="rounded bg-amber-600 hover:bg-amber-500 px-3 py-1.5 font-medium text-white"
+                  onclick="return confirm('WARNING: Restoring a backup may overwrite current database records. Continue?')">
+            Restore Backup
+          </button>
+
+        </form>
+
+      </div>
+
+    </section>
+
+    {% endif %}
 
     <!-- Bar Graph Visualization (Chart.js) -->
     <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">

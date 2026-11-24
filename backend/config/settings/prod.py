@@ -34,7 +34,8 @@ CSRF_TRUSTED_ORIGINS = [
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",  # noqa: F405
+        "NAME": BASE_DIR / "db.sqlite3",
+       # "ATOMIC_REQUESTS": False,
     }
 }
 
@@ -49,6 +50,7 @@ DATABASES = {
 #         "PORT": os.environ.get("DB_PORT", "5432"),
 #         "CONN_MAX_AGE": 60,
 #         "OPTIONS": {"sslmode": os.environ.get("DB_SSLMODE", "prefer")},
+#         "ATOMIC_REQUESTS": False,
 #     }
 # }
 
@@ -63,6 +65,7 @@ DATABASES = {
 #         "PORT": os.environ.get("DB_PORT", "3306"),
 #         "CONN_MAX_AGE": 60,
 #         "OPTIONS": {"charset": "utf8mb4"},
+#         "ATOMIC_REQUESTS": False,
 #     }
 # }
 

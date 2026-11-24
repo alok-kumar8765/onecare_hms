@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lab Report {{ doc.order_number }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; color: #111827; margin: 24px; }
+    .header { border-bottom: 2px solid #111827; padding-bottom: 10px; margin-bottom: 14px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #d1d5db; padding: 8px; text-align: left; font-size: 13px; }
+    th { background: #f3f4f6; }
+    @media print { .no-print { display: none; } body { margin: 0; } }
+  </style>
+</head>
+<body>
+  <div class="no-print" style="margin-bottom: 14px;">
+    <button onclick="window.print()">Print Lab Report</button>
+  </div>
+  <div class="header">
+    <h2 style="margin: 0;">Verified Diagnostic Laboratory Report</h2>
+    <div>Order #: <strong>{{ doc.order_number }}</strong> | Status: <strong>{{ doc.status }}</strong></div>
+    <div>Patient: <strong>{{ doc.patient_name }}</strong></div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Investigation</th>
+        <th>Result</th>
+        <th>Unit</th>
+        <th>Reference Range</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in doc.results %}
+      <tr>
+        <td>{{ row.test_name }}</td>
+        <td><strong>{{ row.result_value }}</strong></td>
+        <td>{{ row.unit or "-" }}</td>
+        <td>{{ row.reference_range or "-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

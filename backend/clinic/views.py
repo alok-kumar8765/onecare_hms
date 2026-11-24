@@ -9,8 +9,10 @@ from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from accounts.models import UserRole
 from tenants.models import ModuleCode
+from core.print_summaries import build_prescription_print_payload
 from tenants.services import is_module_enabled
 from .models import Appointment, Patient
+from django.http import JsonResponse
 from .services import (
     create_opd_encounter_with_prescription,
     export_encounters_csv,
@@ -201,3 +203,18 @@ def clinic_dashboard_view(request):
             "error": error,
         },
     )
+
+@login_required
+def prescription_print_view(request, prescription_id):
+    tenant_id = getattr(request.user, "tenant_id", None)
+    if not tenant_id:
+        return JsonResponse({"detail": "No tenant context found."}, status=403)
+    try:
+        payload = build_prescription_print_payload(tenant_id=tenant_id, prescription_id=prescription_id)
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=404)
+
+    if request.GET.get("format") == "json":
+        #   return JsonResponse(payload, default=str)
+        return JsonResponse(payload, json_dumps_params={"default": str})
+    return render(request, "clinic/prescription_print.html", {"doc": payload})

@@ -2,10 +2,11 @@
 from core.linked_workflows import create_invoice_from_lab_order
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
 from clinic.models import Patient
 from tenants.models import ModuleCode
+from core.print_summaries import build_verified_lab_report_payload
 from tenants.services import is_module_enabled
 from .models import LabOrder, LabTest
 from .services import (
@@ -140,3 +141,17 @@ def laboratory_dashboard_view(request):
             "error": error,
         },
     )
+
+@login_required
+def lab_report_print_view(request, order_id):
+    tenant_id = getattr(request.user, "tenant_id", None)
+    if not tenant_id:
+        return JsonResponse({"detail": "No tenant context found."}, status=403)
+    try:
+        payload = build_verified_lab_report_payload(tenant_id=tenant_id, order_id=order_id)
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    if request.GET.get("format") == "json":
+        return JsonResponse(payload, default=str)
+    return render(request, "laboratory/report_print.html", {"doc": payload})

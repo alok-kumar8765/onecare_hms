@@ -376,7 +376,7 @@ def transfer_ipd_bed(
         raise ValueError("Target bed not found in your organization.")
     if str(target_bed.id) == str(admission.bed_id):
         raise ValueError("Patient is already assigned to this bed.")
-    if target_bed.status != BedStatus.AVAILABLE or not target_bed.is_active:
+    if target_bed.status != BedStatus.AVAILABLE:
         raise ValueError("Target bed is not available for transfer.")
     if (
         admission.branch_id
@@ -404,11 +404,12 @@ def transfer_ipd_bed(
         note_body = f"{note_body} Reason: {transfer_reason.strip()}"
 
     IPDRoundNote.objects.create(
-        tenant_id=tenant_id,
-        branch_id=admission.branch_id,
-        admission=admission,
-        author=actor,
-        note=note_body,
+    tenant_id=tenant_id,
+    branch_id=admission.branch_id,
+    admission=admission,
+    recorded_by=actor,
+    clinical_notes=note_body,
+    treatment_plan="Bed transfer completed.",
     )
 
     record_audit_log(

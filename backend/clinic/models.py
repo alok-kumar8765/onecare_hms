@@ -70,6 +70,14 @@ class Patient(BranchScopedModel):
     def __str__(self) -> str:
         return f"{self.uhid} - {self.full_name}"
 
+    @property
+    def allergies(self):
+        return self.allergies_notes
+
+    @allergies.setter
+    def allergies(self, value):
+        self.allergies_notes = value or ""
+
 
 class Appointment(BranchScopedModel):
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="appointments")

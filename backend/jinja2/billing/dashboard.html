@@ -52,6 +52,100 @@
       </div>
     </div>
 
+    
+    <!-- GST Return Summary: GSTR-3B & GSTR-1 -->
+    <div class="mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h3 class="text-base font-semibold">
+          GST Return Summary (GSTR-3B &amp; GSTR-1 HSN/SAC)
+        </h3>
+
+        <a href="?export=gst_return_csv"
+           class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white">
+          Export GST Return CSV
+        </a>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+        <!-- GSTR-3B Rate Summary -->
+        <div class="overflow-x-auto">
+          <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+            GSTR-3B Rate Summary
+          </h4>
+
+          <table class="w-full text-xs border-collapse">
+            <thead>
+              <tr class="border-b border-slate-800 text-left text-slate-400">
+                <th class="py-1.5">Rate</th>
+                <th class="py-1.5">Invoices</th>
+                <th class="py-1.5">Taxable</th>
+                <th class="py-1.5">CGST</th>
+                <th class="py-1.5">SGST</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {% for r in gst_return.gstr_3b_by_rate %}
+              <tr class="border-b border-slate-800/60">
+                <td class="py-1.5">{{ r.gst_rate_percent }}%</td>
+                <td class="py-1.5">{{ r.invoice_count }}</td>
+                <td class="py-1.5">{{ r.taxable_value }}</td>
+                <td class="py-1.5">{{ r.cgst }}</td>
+                <td class="py-1.5">{{ r.sgst }}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="5" class="py-3 text-center text-slate-500">
+                  No GST rate data available.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- GSTR-1 HSN/SAC Summary -->
+        <div class="overflow-x-auto">
+          <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+            GSTR-1 HSN/SAC Summary
+          </h4>
+
+          <table class="w-full text-xs border-collapse">
+            <thead>
+              <tr class="border-b border-slate-800 text-left text-slate-400">
+                <th class="py-1.5">HSN/SAC</th>
+                <th class="py-1.5">Qty</th>
+                <th class="py-1.5">Taxable</th>
+                <th class="py-1.5">CGST + SGST</th>
+                <th class="py-1.5">Total</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {% for h in gst_return.gstr_1_hsn_summary %}
+              <tr class="border-b border-slate-800/60">
+                <td class="py-1.5">{{ h.hsn_sac_code }}</td>
+                <td class="py-1.5">{{ h.quantity }}</td>
+                <td class="py-1.5">{{ h.taxable_value }}</td>
+                <td class="py-1.5">{{ h.cgst }} / {{ h.sgst }}</td>
+                <td class="py-1.5">{{ h.total_value }}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="5" class="py-3 text-center text-slate-500">
+                  No HSN/SAC data available.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+
+    
     <div class="grid grid-cols-1 md:grid-cols-3 gap-5 text-xs">
       <!-- Create Invoice -->
       <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5">

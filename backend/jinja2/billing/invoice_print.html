@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Invoice {{ doc.invoice_number }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; color: #111827; margin: 24px; }
+    .header { display: flex; justify-content: space-between; border-bottom: 2px solid #111827; padding-bottom: 12px; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #d1d5db; padding: 8px; text-align: left; font-size: 13px; }
+    th { background: #f3f4f6; }
+    .right { text-align: right; }
+    .totals { margin-top: 16px; width: 320px; margin-left: auto; }
+    @media print { .no-print { display: none; } body { margin: 0; } }
+  </style>
+</head>
+<body>
+  <div class="no-print" style="margin-bottom: 14px;">
+    <button onclick="window.print()">Print Invoice</button>
+  </div>
+  <div class="header">
+    <div>
+      <h2 style="margin: 0;">Tax Invoice / Receipt</h2>
+      <div>Invoice #: <strong>{{ doc.invoice_number }}</strong></div>
+      <div>Status: <strong>{{ doc.status }}</strong></div>
+    </div>
+    <div style="text-align: right;">
+      <div>Patient / Customer: <strong>{{ doc.patient_name }}</strong></div>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Description</th>
+        <th>HSN/SAC</th>
+        <th class="right">Qty</th>
+        <th class="right">Line Total (INR)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in doc.items %}
+      <tr>
+        <td>{{ item.description }}</td>
+        <td>{{ item.hsn_sac_code or "-" }}</td>
+        <td class="right">{{ item.quantity }}</td>
+        <td class="right">{{ item.line_total }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <table class="totals">
+    <tr><th>Subtotal</th><td class="right">{{ doc.subtotal }}</td></tr>
+    <tr><th>GST</th><td class="right">{{ doc.gst_amount }}</td></tr>
+    <tr><th>Grand Total</th><td class="right"><strong>{{ doc.total_amount }}</strong></td></tr>
+    <tr><th>Paid</th><td class="right">{{ doc.paid_amount }}</td></tr>
+    <tr><th>Balance Due</th><td class="right"><strong>{{ doc.balance_due }}</strong></td></tr>
+  </table>
+</body>
+</html>

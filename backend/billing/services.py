@@ -142,17 +142,20 @@ def create_invoice_with_items(
             line_base + line_gst
         )
 
+        
         InvoiceLineItem.objects.create(
             invoice=invoice,
             description=desc,
             category=(
                 raw.get("category") or "GENERAL"
             ).strip().upper(),
+            hsn_sac_code=(raw.get("hsn_sac_code") or "").strip(),
             quantity=qty,
             unit_price=unit_price,
             gst_rate_percent=gst_rate,
             line_total=line_total,
         )
+
 
         subtotal += line_base
         total_gst += line_gst

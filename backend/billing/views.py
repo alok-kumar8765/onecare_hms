@@ -1,7 +1,9 @@
 # backend/billing/views.py
-from decimal import Decimal, InvalidOperation
+import csv
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
+from core.print_summaries import build_invoice_print_payload
+from decimal import Decimal, InvalidOperation
 from django.shortcuts import render
 from clinic.models import Patient
 from tenants.models import ModuleCode
@@ -13,14 +15,20 @@ from .services import (
     record_expense,
     record_invoice_payment,
     summarize_finance,
+    build_gst_return_summary,
 )
 
 
 @login_required
 def billing_dashboard_view(request):
     tenant_id = getattr(request.user, "tenant_id", None)
+
     if tenant_id and not is_module_enabled(tenant_id, ModuleCode.BILLING):
-        return render(request, "clinic/module_disabled.html", {"module_name": "Billing & Finance"})
+        return render(
+            request,
+            "clinic/module_disabled.html",
+            {"module_name": "Billing & Finance"},
+        )
 
     feedback = None
     error = None
@@ -30,65 +38,184 @@ def billing_dashboard_view(request):
             "No clinic or hospital organization (tenant) is linked to your account. "
             "Sign in with a tenant staff account or use a tenant-scoped account first."
         )
-        
+
     if request.method == "POST" and tenant_id:
         action = request.POST.get("action")
+
         try:
             if action == "create_invoice":
-                patient = Patient.objects.filter(id=request.POST.get("patient_id"), tenant_id=tenant_id).first()
+                patient = Patient.objects.filter(
+                    id=request.POST.get("patient_id"),
+                    tenant_id=tenant_id,
+                ).first()
+
                 inv = create_invoice_with_items(
                     tenant_id=tenant_id,
                     patient=patient,
                     customer_name=request.POST.get("customer_name") or "",
-                    discount_amount=Decimal((request.POST.get("discount_amount") or "0.00").strip()),
+                    discount_amount=Decimal(
+                        (request.POST.get("discount_amount") or "0.00").strip()
+                    ),
                     branch_id=getattr(request.user, "primary_branch_id", None),
                     items=[
                         {
-                            "description": (request.POST.get("description") or "").strip(),
+                            "description": (
+                                request.POST.get("description") or ""
+                            ).strip(),
                             "category": request.POST.get("category") or "OPD",
                             "quantity": int(request.POST.get("quantity") or 1),
-                            "unit_price": Decimal((request.POST.get("unit_price") or "0.00").strip()),
-                            "gst_rate_percent": Decimal((request.POST.get("gst_rate_percent") or "0.00").strip()),
+                            "unit_price": Decimal(
+                                (request.POST.get("unit_price") or "0.00").strip()
+                            ),
+                            "gst_rate_percent": Decimal(
+                                (request.POST.get("gst_rate_percent") or "0.00").strip()
+                            ),
                         }
                     ],
                     actor=request.user,
                     request=request,
                 )
-                feedback = f"Created Invoice {inv.invoice_number} (Total ₹{inv.total_amount})."
+
+                feedback = (
+                    f"Created Invoice {inv.invoice_number} "
+                    f"(Total ₹{inv.total_amount})."
+                )
+
             elif action == "record_payment":
                 txn = record_invoice_payment(
                     tenant_id=tenant_id,
                     invoice_id=request.POST.get("invoice_id"),
-                    amount=Decimal((request.POST.get("amount") or "0.00").strip()),
+                    amount=Decimal(
+                        (request.POST.get("amount") or "0.00").strip()
+                    ),
                     method=request.POST.get("method") or PaymentMethod.UPI,
                     reference_no=request.POST.get("reference_no") or "",
                     actor=request.user,
                     request=request,
                 )
-                feedback = f"Recorded ₹{txn.amount} ({txn.method}) for {txn.invoice.invoice_number}."
+
+                feedback = (
+                    f"Recorded ₹{txn.amount} ({txn.method}) "
+                    f"for {txn.invoice.invoice_number}."
+                )
+
             elif action == "record_expense":
                 exp = record_expense(
                     tenant_id=tenant_id,
                     title=request.POST.get("title") or "",
-                    amount=Decimal((request.POST.get("amount") or "0.00").strip()),
+                    amount=Decimal(
+                        (request.POST.get("amount") or "0.00").strip()
+                    ),
                     category=request.POST.get("category") or "OPERATIONAL",
                     vendor_name=request.POST.get("vendor_name") or "",
                     branch_id=getattr(request.user, "primary_branch_id", None),
                     actor=request.user,
                     request=request,
                 )
-                feedback = f"Logged expense '{exp.title}' (₹{exp.amount})."
+
+                feedback = (
+                    f"Logged expense '{exp.title}' (₹{exp.amount})."
+                )
+
         except (ValueError, InvalidOperation) as exc:
             error = str(exc)
 
-    invoices = Invoice.objects.prefetch_related("payments").filter(tenant_id=tenant_id)[:40] if tenant_id else []
+    # --------------------------------------------------
+    # GST RETURN SUMMARY + CSV EXPORT
+    # --------------------------------------------------
+
+    gst_return = (
+        build_gst_return_summary(tenant_id=tenant_id)
+        if tenant_id
+        else {
+            "gstr_3b_by_rate": [],
+            "gstr_1_hsn_summary": [],
+        }
+    )
+
+    if tenant_id and request.GET.get("export") == "gst_return_csv":
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = (
+            'attachment; filename="gst_return_summary.csv"'
+        )
+
+        writer = csv.writer(response)
+
+        writer.writerow([
+            "Section",
+            "Rate_or_HSN",
+            "Count_or_Qty",
+            "Taxable_Value",
+            "CGST",
+            "SGST",
+            "Total_Tax_or_Value",
+        ])
+
+        for row in gst_return["gstr_3b_by_rate"]:
+            writer.writerow([
+                "GSTR-3B Rate",
+                f"{row['gst_rate_percent']}%",
+                row["invoice_count"],
+                row["taxable_value"],
+                row["cgst"],
+                row["sgst"],
+                row["total_tax"],
+            ])
+
+        for row in gst_return["gstr_1_hsn_summary"]:
+            writer.writerow([
+                "GSTR-1 HSN/SAC",
+                row["hsn_sac_code"],
+                row["quantity"],
+                row["taxable_value"],
+                row["cgst"],
+                row["sgst"],
+                row["total_value"],
+            ])
+
+        return response
+
+    # --------------------------------------------------
+    # EXISTING INVOICE DATA + CSV EXPORT
+    # --------------------------------------------------
+
+    invoices = (
+        Invoice.objects.prefetch_related("payments")
+        .filter(tenant_id=tenant_id)[:40]
+        if tenant_id
+        else []
+    )
+
     if request.GET.get("export") == "csv" and tenant_id:
-        resp = HttpResponse(export_invoices_csv(invoices), content_type="text/csv")
-        resp["Content-Disposition"] = 'attachment; filename="billing_invoices.csv"'
+        resp = HttpResponse(
+            export_invoices_csv(invoices),
+            content_type="text/csv",
+        )
+        resp["Content-Disposition"] = (
+            'attachment; filename="billing_invoices.csv"'
+        )
         return resp
 
-    expenses = ExpenseEntry.objects.filter(tenant_id=tenant_id)[:30] if tenant_id else []
-    patients = Patient.objects.filter(tenant_id=tenant_id)[:50] if tenant_id else []
+    # --------------------------------------------------
+    # EXPENSES + PATIENTS
+    # --------------------------------------------------
+
+    expenses = (
+        ExpenseEntry.objects.filter(tenant_id=tenant_id)[:30]
+        if tenant_id
+        else []
+    )
+
+    patients = (
+        Patient.objects.filter(tenant_id=tenant_id)[:50]
+        if tenant_id
+        else []
+    )
+
+    # --------------------------------------------------
+    # FINANCIAL SUMMARY
+    # --------------------------------------------------
+
     summary = (
         summarize_finance(tenant_id=tenant_id)
         if tenant_id
@@ -101,6 +228,10 @@ def billing_dashboard_view(request):
         }
     )
 
+    # --------------------------------------------------
+    # DASHBOARD RENDER
+    # --------------------------------------------------
+
     return render(
         request,
         "billing/dashboard.html",
@@ -112,5 +243,40 @@ def billing_dashboard_view(request):
             "payment_methods": PaymentMethod.choices,
             "feedback": feedback,
             "error": error,
+
+            # GST return context
+            "gst_return": gst_return,
         },
+    )
+
+
+@login_required
+def invoice_print_view(request, invoice_id):
+    tenant_id = getattr(request.user, "tenant_id", None)
+
+    if not tenant_id:
+        return JsonResponse(
+            {"detail": "No tenant context found."},
+            status=403,
+        )
+
+    try:
+        payload = build_invoice_print_payload(
+            tenant_id=tenant_id,
+            invoice_id=invoice_id,
+        )
+
+    except ValueError as exc:
+        return JsonResponse(
+            {"detail": str(exc)},
+            status=404,
+        )
+
+    if request.GET.get("format") == "json":
+        return JsonResponse(payload, json_dumps_params={"default": str})
+
+    return render(
+        request,
+        "billing/invoice_print.html",
+        {"doc": payload},
     )

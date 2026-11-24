@@ -11,11 +11,12 @@ from laboratory.models import LabOrder
 from pharmacy.models import Medicine, PharmacySale
 from pharmacy.services import dispense_fefo_sale
 from core.allergy_checks import find_allergy_conflicts
+from math import ceil
+from django.utils import timezone
+
 
 def _q(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-
 
 
 @transaction.atomic
@@ -165,15 +166,22 @@ def create_invoice_from_lab_order(
     if not order:
         raise ValueError("Lab order not found in your organization.")
 
+    
     items_payload = []
-    for item in order.items.all():
+    for item in order.items.select_related("test").all():
         items_payload.append({
-            "description": f"Lab Test: {item.test.code} - {item.test.name}",
+            "description": f"Lab Test: {item.test.name} ({order.order_number})",
             "category": "LABORATORY",
+            "hsn_sac_code": getattr(item.test, "hsn_sac_code", "") or "999312",
             "quantity": 1,
             "unit_price": item.price,
-            "gst_rate_percent": item.test.gst_rate_percent,
+            "gst_rate_percent": getattr(
+                item.test,
+                "gst_rate_percent",
+                Decimal("0.00")
+            ),
         })
+
 
     inv = create_invoice_with_items(
         tenant_id=tenant_id,
@@ -200,6 +208,7 @@ def create_invoice_from_lab_order(
 
 
 @transaction.atomic
+
 def create_invoice_from_ipd_admission(
     *,
     tenant_id,
@@ -210,30 +219,60 @@ def create_invoice_from_ipd_admission(
 ) -> Invoice:
     admission = (
         IPDAdmission.objects.select_related("patient", "ward", "bed")
+        .prefetch_related("billing_items")
         .filter(id=admission_id, tenant_id=tenant_id)
         .first()
     )
+
     if not admission:
         raise ValueError("IPD admission not found in your organization.")
+
     if admission.total_amount <= Decimal("0.00"):
-        raise ValueError("IPD admission has no settled charges yet. Discharge or add charges first.")
+        raise ValueError(
+            "IPD admission has no settled charges yet. Discharge or add charges first."
+        )
+
+    # Calculate billable days using your existing admission billing logic.
+    # Use the existing billable_days calculation from your project here.
+    # Calculate billable days from admission and discharge timestamps.
+    end_dt = admission.discharged_at or timezone.now()
+
+    elapsed_seconds = max(
+        (end_dt - admission.admitted_at).total_seconds(),
+        0
+    )
+
+    billable_days = max(1, ceil(elapsed_seconds / 86400))
 
     items_payload = [
         {
-            "description": f"IPD Stay & Care ({admission.admission_number} - {admission.ward.name}/{admission.bed.bed_number})",
+            "description": (
+                f"IPD Bed Stay ({admission.ward.name} - "
+                f"{admission.bed.bed_number}) x {billable_days} day(s)"
+            ),
             "category": "IPD",
-            "quantity": 1,
-            "unit_price": admission.subtotal_amount,
+            "hsn_sac_code": (
+                getattr(admission.ward, "hsn_sac_code", "") or "999311"
+            ),
+            "quantity": billable_days,
+            "unit_price": admission.ward.daily_charge,
             "gst_rate_percent": Decimal("0.00"),
         }
     ]
-    if admission.gst_amount > Decimal("0.00"):
+
+    # Additional IPD billing items
+    for extra in admission.billing_items.all():
         items_payload.append({
-            "description": f"IPD Applicable GST ({admission.admission_number})",
-            "category": "IPD_TAX",
-            "quantity": 1,
-            "unit_price": admission.gst_amount,
-            "gst_rate_percent": Decimal("0.00"),
+            "description": extra.description,
+            "category": "IPD",
+            "hsn_sac_code": (
+                getattr(extra, "hsn_sac_code", "") or "999311"
+            ),
+            "quantity": extra.quantity,
+            "unit_price": extra.unit_price,
+            "gst_rate_percent": getattr(
+                extra, "gst_rate_percent", Decimal("0.00")
+            ),
         })
 
     inv = create_invoice_with_items(
@@ -247,6 +286,7 @@ def create_invoice_from_ipd_admission(
         actor=actor,
         request=request,
     )
+
     record_audit_log(
         action="workflow.ipd_to_invoice",
         resource_type="Invoice",
@@ -255,8 +295,12 @@ def create_invoice_from_ipd_admission(
         tenant_id=tenant_id,
         branch_id=inv.branch_id,
         request=request,
-        metadata={"admission_number": admission.admission_number, "invoice_number": inv.invoice_number},
+        metadata={
+            "admission_number": admission.admission_number,
+            "invoice_number": inv.invoice_number,
+        },
     )
+
     return inv
 
 
