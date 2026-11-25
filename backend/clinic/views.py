@@ -201,6 +201,8 @@ def clinic_dashboard_view(request):
             "chart_values": chart_values,
             "feedback": feedback,
             "error": error,
+            "user": request.user,
+            "request": request,
         },
     )
 

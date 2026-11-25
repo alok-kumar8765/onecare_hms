@@ -38,7 +38,9 @@
       </tr>
     </thead>
     <tbody>
-      {% for item in doc.items %}
+      {% set print_items = doc["items"] if (doc is mapping and "items" in doc) else (doc.items if (doc.items is defined and doc.items is iterable) else []) %}
+
+      {% for item in print_items %}
       <tr>
         <td>{{ item.description }}</td>
         <td>{{ item.hsn_sac_code or "-" }}</td>

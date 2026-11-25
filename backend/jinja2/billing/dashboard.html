@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,13 +8,16 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
+
 <body class="bg-slate-950 text-slate-100 min-h-screen p-6" x-data="{ tab: 'invoices' }">
   <div class="max-w-6xl mx-auto space-y-6">
+
     <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
       <div>
         <p class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">OneCare HMS · Billing & Finance</p>
         <h1 class="text-xl font-bold text-white">Invoices, UPI/Cash Collections & Expense Ledger</h1>
       </div>
+
       <div class="flex gap-2 text-xs">
         <a href="?export=csv" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2 text-emerald-300 font-semibold">Export Invoices CSV</a>
         <a href="{{ url('tenants-overview') }}" class="rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-2">Organization</a>
@@ -24,37 +28,47 @@
     {% if feedback %}
     <div class="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-200">{{ feedback }}</div>
     {% endif %}
+
     {% if error %}
     <div class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">{{ error }}</div>
     {% endif %}
 
     <!-- KPI Cards -->
     <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs">
+
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
         <p class="text-slate-400">Total Invoiced</p>
         <p class="text-lg font-bold text-white mt-1">₹{{ summary.total_invoiced }}</p>
       </div>
+
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
         <p class="text-slate-400">Collected</p>
         <p class="text-lg font-bold text-emerald-400 mt-1">₹{{ summary.total_collected }}</p>
       </div>
+
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
         <p class="text-slate-400">Pending Due</p>
         <p class="text-lg font-bold text-amber-300 mt-1">₹{{ summary.pending_receivables }}</p>
       </div>
+
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
         <p class="text-slate-400">Expenses</p>
         <p class="text-lg font-bold text-rose-300 mt-1">₹{{ summary.total_expenses }}</p>
       </div>
+
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
         <p class="text-slate-400">Net Cashflow</p>
         <p class="text-lg font-bold text-sky-300 mt-1">₹{{ summary.net_cashflow }}</p>
       </div>
+
     </div>
 
-    
     <!-- GST Return Summary: GSTR-3B & GSTR-1 -->
+
+    {% if gst_return is defined and gst_return %}
+
     <div class="mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+
       <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
         <h3 class="text-base font-semibold">
           GST Return Summary (GSTR-3B &amp; GSTR-1 HSN/SAC)
@@ -70,6 +84,7 @@
 
         <!-- GSTR-3B Rate Summary -->
         <div class="overflow-x-auto">
+
           <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
             GSTR-3B Rate Summary
           </h4>
@@ -103,10 +118,12 @@
               {% endfor %}
             </tbody>
           </table>
+
         </div>
 
         <!-- GSTR-1 HSN/SAC Summary -->
         <div class="overflow-x-auto">
+
           <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
             GSTR-1 HSN/SAC Summary
           </h4>
@@ -140,107 +157,159 @@
               {% endfor %}
             </tbody>
           </table>
+
         </div>
 
       </div>
     </div>
 
-    
+    {% endif %}
+
+    <!-- Invoice, Payment and Expense Forms -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-5 text-xs">
+
       <!-- Create Invoice -->
       <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5">
         {{ csrf_input }}
         <input type="hidden" name="action" value="create_invoice" />
+
         <h2 class="font-semibold text-white text-sm">1. Create Invoice</h2>
+
         <select name="patient_id" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5">
           <option value="">Walk-in / Select Patient</option>
           {% for p in patients %}
           <option value="{{ p.id }}">{{ p.uhid }} — {{ p.full_name }}</option>
           {% endfor %}
         </select>
+
         <input type="text" name="customer_name" placeholder="Customer / Patient Name" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
+
         <input type="text" name="description" required placeholder="Service / Consultation description" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
+
         <div class="grid grid-cols-3 gap-2">
           <input type="number" min="1" name="quantity" value="1" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5" />
           <input type="number" step="0.01" name="unit_price" required placeholder="Rate ₹" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5" />
           <input type="number" step="0.01" name="gst_rate_percent" value="0.00" placeholder="GST %" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5" />
         </div>
-        <button type="submit" class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 py-2 font-semibold text-white">Generate Invoice</button>
+
+        <button type="submit" class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 py-2 font-semibold text-white">
+          Generate Invoice
+        </button>
       </form>
 
       <!-- Record Payment -->
       <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5">
         {{ csrf_input }}
         <input type="hidden" name="action" value="record_payment" />
+
         <h2 class="font-semibold text-white text-sm">2. Record Payment</h2>
+
         <select name="invoice_id" required class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5">
           <option value="">Select Invoice</option>
           {% for inv in invoices %}
           <option value="{{ inv.id }}">{{ inv.invoice_number }} — Due ₹{{ inv.balance_due }}</option>
           {% endfor %}
         </select>
+
         <div class="grid grid-cols-2 gap-2">
           <select name="method" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5">
             {% for val, label in payment_methods %}
             <option value="{{ val }}">{{ label }}</option>
             {% endfor %}
           </select>
+
           <input type="number" step="0.01" name="amount" required placeholder="Amount ₹" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5" />
         </div>
+
         <input type="text" name="reference_no" placeholder="UPI Ref / Receipt No." class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
-        <button type="submit" class="w-full rounded-lg bg-slate-800 hover:bg-slate-700 py-2 font-semibold text-white">Record Payment</button>
+
+        <button type="submit" class="w-full rounded-lg bg-slate-800 hover:bg-slate-700 py-2 font-semibold text-white">
+          Record Payment
+        </button>
       </form>
 
       <!-- Record Expense -->
       <form method="post" class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5">
         {{ csrf_input }}
         <input type="hidden" name="action" value="record_expense" />
+
         <h2 class="font-semibold text-white text-sm">3. Record Expense</h2>
+
         <input type="text" name="title" required placeholder="Expense title (e.g., Electricity / Reagents)" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
+
         <div class="grid grid-cols-2 gap-2">
           <input type="text" name="category" value="OPERATIONAL" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5" />
           <input type="number" step="0.01" name="amount" required placeholder="Amount ₹" class="rounded bg-slate-950 border border-slate-700 px-2 py-1.5" />
         </div>
+
         <input type="text" name="vendor_name" placeholder="Vendor Name" class="w-full rounded bg-slate-950 border border-slate-700 px-2.5 py-1.5" />
-        <button type="submit" class="w-full rounded-lg bg-rose-600 hover:bg-rose-500 py-2 font-semibold text-white">Save Expense</button>
+
+        <button type="submit" class="w-full rounded-lg bg-rose-600 hover:bg-rose-500 py-2 font-semibold text-white">
+          Save Expense
+        </button>
       </form>
+
     </div>
 
+    <!-- Invoice and Expense Records -->
     <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3 text-xs">
+
       <div class="flex gap-4 border-b border-slate-800 pb-2">
+
         <button type="button" @click="tab = 'invoices'" :class="tab === 'invoices' ? 'text-emerald-400 font-semibold' : 'text-slate-400'">
           Invoices ({{ invoices|length }})
         </button>
+
         <button type="button" @click="tab = 'expenses'" :class="tab === 'expenses' ? 'text-emerald-400 font-semibold' : 'text-slate-400'">
           Expenses ({{ expenses|length }})
         </button>
+
       </div>
 
       <div x-show="tab === 'invoices'" class="space-y-2">
+
         {% for inv in invoices %}
         <div class="rounded-lg bg-slate-950 border border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
+
           <div>
             <span class="font-semibold text-white">{{ inv.invoice_number }}</span>
             <span class="text-slate-400">· {{ inv.customer_name }} · {{ inv.status }}</span>
           </div>
-          <span class="font-mono text-emerald-300">Total ₹{{ inv.total_amount }} · Paid ₹{{ inv.paid_amount }} · Due ₹{{ inv.balance_due }}</span>
+
+          <span class="font-mono text-emerald-300">
+            Total ₹{{ inv.total_amount }} · Paid ₹{{ inv.paid_amount }} · Due ₹{{ inv.balance_due }}
+          </span>
+
         </div>
+
         {% else %}
         <p class="text-slate-400">No invoices generated yet.</p>
         {% endfor %}
+
       </div>
 
       <div x-show="tab === 'expenses'" class="space-y-2">
+
         {% for exp in expenses %}
         <div class="rounded-lg bg-slate-950 border border-slate-800 px-4 py-2 flex items-center justify-between">
-          <span><strong class="text-white">{{ exp.title }}</strong> ({{ exp.category }} · {{ exp.expense_date }})</span>
+
+          <span>
+            <strong class="text-white">{{ exp.title }}</strong>
+            ({{ exp.category }} · {{ exp.expense_date }})
+          </span>
+
           <span class="font-mono text-rose-300">-₹{{ exp.amount }}</span>
+
         </div>
+
         {% else %}
         <p class="text-slate-400">No expenses logged yet.</p>
         {% endfor %}
+
       </div>
+
     </div>
+
   </div>
 </body>
 </html>

@@ -43,6 +43,7 @@ urlpatterns = [
     path("laboratory/", include("laboratory.urls")),
     path("ipd/", include("ipd.urls")),
     path("billing/", include("billing.urls")),
+    path("core/", include("core.urls")),
 ]
 
 if settings.DEBUG:

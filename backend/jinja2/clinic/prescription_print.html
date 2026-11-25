@@ -37,13 +37,14 @@
       </tr>
     </thead>
     <tbody>
-      {% for item in doc.items %}
+      {% set rx_items = doc["items"] if (doc is mapping and "items" in doc) else (doc.items if (doc.items is defined and doc.items is iterable) else []) %}
+      {% for item in rx_items %}
       <tr>
         <td>{{ item.medicine_name }}</td>
         <td>{{ item.dosage or "-" }}</td>
         <td>{{ item.frequency or "-" }}</td>
         <td>{{ item.duration or "-" }}</td>
-        <td>{{ item.quantity }}</td>
+        <td>{{ item.quantity or "-" }}</td>
       </tr>
       {% endfor %}
     </tbody>

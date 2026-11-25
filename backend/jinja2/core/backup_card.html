@@ -1,0 +1,31 @@
+{% if user.is_authenticated and (user.is_superuser or user.role in ['ADMIN', 'HR', 'DOCTOR']) %}
+<section class="rounded-xl border border-slate-800 bg-slate-900/70 p-4 mt-6">
+  <h3 class="text-sm font-semibold text-white mb-2">Database Backup &amp; Restore</h3>
+  {% if backup_message %}
+  <p class="mb-3 rounded bg-slate-800 px-3 py-2 text-xs text-amber-200">{{ backup_message }}</p>
+  {% endif %}
+  <div class="flex flex-wrap gap-2 mb-4">
+    <a href="{{ url('core-backup-download') }}" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white">
+      Download Backup (Local)
+    </a>
+    <form method="post" action="{{ url('core-backup-drive-upload') }}">
+      {{ csrf_input }}
+      <button type="submit" class="rounded bg-sky-600 hover:bg-sky-500 px-3 py-1.5 text-xs font-medium text-white">
+        Save to Google Drive
+      </button>
+    </form>
+  </div>
+  <form method="post" action="{{ url('core-backup-restore') }}" enctype="multipart/form-data" class="space-y-2 text-xs">
+    {{ csrf_input }}
+    <input type="file" name="backup_file" class="block w-full text-slate-300" />
+    <input type="text" name="drive_file_id" placeholder="Or Google Drive File ID" class="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-white" />
+    <label class="flex items-center gap-2 text-slate-300">
+      <input type="checkbox" name="confirm_restore" value="1" required />
+      <span>I understand restoring will overwrite current database records.</span>
+    </label>
+    <button type="submit" class="rounded bg-amber-600 hover:bg-amber-500 px-3 py-1.5 font-medium text-white">
+      Restore Backup
+    </button>
+  </form>
+</section>
+{% endif %}

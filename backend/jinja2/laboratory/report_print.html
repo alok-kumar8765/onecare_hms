@@ -31,7 +31,8 @@
       </tr>
     </thead>
     <tbody>
-      {% for row in doc.results %}
+      {% set report_rows = doc["results"] if (doc is mapping and "results" in doc) else (doc.results if (doc.results is defined and doc.results is iterable) else []) %}
+      {% for row in report_rows %}
       <tr>
         <td>{{ row.test_name }}</td>
         <td><strong>{{ row.result_value }}</strong></td>
