@@ -9,6 +9,12 @@ from clinic.services import (
     register_patient,
     schedule_appointment,
 )
+from decimal import Decimal
+from billing.services import record_expense
+from ipd.services import create_ward_with_beds
+from laboratory.models import LabOrder, LabOrderStatus
+from laboratory.services import mark_sample_collected, record_test_result
+from pharmacy.services import add_medicine_and_batch, dispense_fefo_sale
 
 try:
     from tenants.models import Branch, Tenant
@@ -16,6 +22,85 @@ except ImportError:
     from clinic.models import Branch
     Tenant = None
 
+# @pytest.mark.django_db
+# def test_mark_sample_collected_rejects_order_without_sample():
+#     tenant_id = uuid.uuid4()
+#     order = LabOrder.objects.create(
+#         tenant_id=tenant_id,
+#         order_number=f"LAB-{uuid.uuid4().hex[:8].upper()}",
+#         status=LabOrderStatus.ORDERED,
+#     )
+#     with pytest.raises(ValueError, match="No sample record found"):
+#         mark_sample_collected(tenant_id=tenant_id, order_id=order.id)
+
+
+@pytest.mark.django_db
+def test_mark_sample_collected_rejects_order_without_sample():
+    tenant_id = uuid.uuid4()
+
+    patient, _ = register_patient(tenant_id=tenant_id, full_name="Test Patient", phone_number="+919811111111",)
+
+    order = LabOrder.objects.create(tenant_id=tenant_id, patient=patient, order_number=f"LAB-{uuid.uuid4().hex[:8].upper()}", status=LabOrderStatus.ORDERED,)
+
+    with pytest.raises(ValueError, match="No sample record found"):
+        mark_sample_collected(tenant_id=tenant_id, order_id=order.id,)
+
+
+# @pytest.mark.django_db
+# def test_record_test_result_blocked_when_order_verified_or_delivered():
+#     tenant_id = uuid.uuid4()
+#     order = LabOrder.objects.create(
+#         tenant_id=tenant_id,
+#         order_number=f"LAB-{uuid.uuid4().hex[:8].upper()}",
+#         status=LabOrderStatus.VERIFIED,
+#     )
+#     item = order.items.first()
+#     if item is not None:
+#         with pytest.raises(ValueError, match="verified or delivered"):
+#             record_test_result(
+#                 tenant_id=tenant_id,
+#                 order_item_id=item.id,
+#                 observed_value="14.2",
+#                 is_abnormal=False,
+#             )
+
+@pytest.mark.django_db
+def test_record_test_result_blocked_when_order_verified_or_delivered():
+    tenant_id = uuid.uuid4()
+
+    patient, _ = register_patient(tenant_id=tenant_id, full_name="Test Patient", phone_number="+919822222222",)
+
+    order = LabOrder.objects.create(tenant_id=tenant_id, patient=patient, order_number=f"LAB-{uuid.uuid4().hex[:8].upper()}", status=LabOrderStatus.VERIFIED,)
+
+    item = order.items.first()
+
+    if item is not None:
+        with pytest.raises(ValueError, match="verified or delivered"):
+            record_test_result(tenant_id=tenant_id, order_item_id=item.id, observed_value="14.2", is_abnormal=False,)
+
+
+@pytest.mark.django_db
+def test_expense_and_ward_reject_nonexistent_branch():
+    tenant_id = uuid.uuid4()
+    missing_branch_id = uuid.uuid4()
+
+    with pytest.raises(ValueError, match="Selected branch does not exist"):
+        record_expense(
+            tenant_id=tenant_id,
+            title="Generator Diesel",
+            amount=Decimal("500.00"),
+            branch_id=missing_branch_id,
+        )
+
+    with pytest.raises(ValueError, match="Selected branch does not exist"):
+        create_ward_with_beds(
+            tenant_id=tenant_id,
+            branch_id=missing_branch_id,
+            code="GW-1",
+            name="General Ward",
+            daily_charge=Decimal("1000.00"),
+            bed_count=2,
+        )
 
 def _create_test_tenant_and_branch():
     tenant = None

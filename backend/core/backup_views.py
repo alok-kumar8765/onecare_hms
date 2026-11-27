@@ -10,7 +10,15 @@ from django.views.decorators.http import require_GET, require_POST
 from .audit import record_audit_log
 from .drive_backup import download_backup_from_google_drive, upload_backup_to_google_drive
 
-ALLOWED_BACKUP_ROLES = {"ADMIN", "HR", "DOCTOR"}
+
+ALLOWED_BACKUP_ROLES = {
+    "ADMIN",
+    "HR",
+    "HOSPITAL_OWNER",
+    "HOSPITAL_ADMIN",
+    "HR_MANAGER",
+    "DOCTOR",
+}
 
 def pop_backup_message(request) -> str:
     if not getattr(request, "session", None):
