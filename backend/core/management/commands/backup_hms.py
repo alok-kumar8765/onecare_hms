@@ -16,6 +16,50 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _verify_checksum(target: Path) -> None:
+    sha_path = Path(f"{target}.sha256")
+
+    if not target.is_file():
+        raise CommandError(f"Backup file not found: {target}")
+
+    if not sha_path.is_file():
+        raise CommandError(
+            f"Checksum sidecar missing: {sha_path}"
+        )
+
+    try:
+        expected = (
+            sha_path.read_text(encoding="utf-8")
+            .strip()
+            .split()[0]
+            .lower()
+        )
+    except (OSError, IndexError) as exc:
+        raise CommandError(
+            f"Unable to read checksum file: {sha_path}"
+        ) from exc
+
+    actual = _sha256_file(target)
+
+    if expected != actual:
+        raise CommandError(
+            f"Checksum mismatch for {target}."
+        )
+
+
+def _run_subprocess(command, **kwargs):
+    try:
+        return _run_subprocess(cmd, env=env)
+    except subprocess.CalledProcessError as exc:
+        raise CommandError(
+            f"Backup subprocess failed: {exc}"
+        ) from exc
+    except FileNotFoundError as exc:
+        raise CommandError(
+            f"Required database command not found: {exc.filename}"
+        ) from exc
+
+
 class Command(BaseCommand):
     help = "Create, verify, rotate, or restore OneCare HMS database backups."
 
@@ -28,7 +72,14 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--output-dir",
-            default=str(Path(settings.BASE_DIR) / "backups"),
+            # default=str(Path(settings.BASE_DIR) / "backups"),
+            default=str(
+                getattr(
+                    settings,
+                    "BACKUP_DIR",
+                    Path(settings.BASE_DIR) / "backups",
+                )
+            ),
             help="Directory where backup artifacts are stored.",
         )
         parser.add_argument(
@@ -60,26 +111,63 @@ class Command(BaseCommand):
                 self._rotate_backups(out_dir=out_dir, retention_days=options["retention_days"])
             self.stdout.write(self.style.SUCCESS(f"Backup created: {artifact} (sha256={checksum})"))
 
+        # elif mode == "verify":
+        #     target = Path(options["backup_file"])
+        #     if not target.is_file():
+        #         raise CommandError("Specify a valid --file path to verify.")
+        #     sha_path = Path(f"{target}.sha256")
+        #     if not sha_path.is_file():
+        #         raise CommandError(f"Checksum sidecar missing: {sha_path}")
+        #     expected = sha_path.read_text(encoding="utf-8").strip().split()[0]
+        #     actual = _sha256_file(target)
+        #     if expected != actual:
+        #         raise CommandError(f"Checksum mismatch for {target}: expected {expected}, got {actual}")
+        #     self.stdout.write(self.style.SUCCESS(f"Checksum verified OK: {target}"))
         elif mode == "verify":
             target = Path(options["backup_file"])
-            if not target.is_file():
-                raise CommandError("Specify a valid --file path to verify.")
-            sha_path = Path(f"{target}.sha256")
-            if not sha_path.is_file():
-                raise CommandError(f"Checksum sidecar missing: {sha_path}")
-            expected = sha_path.read_text(encoding="utf-8").strip().split()[0]
-            actual = _sha256_file(target)
-            if expected != actual:
-                raise CommandError(f"Checksum mismatch for {target}: expected {expected}, got {actual}")
-            self.stdout.write(self.style.SUCCESS(f"Checksum verified OK: {target}"))
 
+            if not target.is_file():
+                raise CommandError(
+                    "Specify a valid --file path to verify."
+                )
+
+            _verify_checksum(target)
+
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Checksum verified OK: {target}"
+                )
+            )
+
+        # elif mode == "restore":
+        #     target = Path(options["backup_file"])
+        #     if not target.is_file():
+        #         raise CommandError("Specify a valid --file path to restore.")
+        #     self._restore_backup(engine=engine, db=db, backup_file=target)
+        #     self.stdout.write(self.style.SUCCESS(f"Restore completed from: {target}"))
         elif mode == "restore":
             target = Path(options["backup_file"])
-            if not target.is_file():
-                raise CommandError("Specify a valid --file path to restore.")
-            self._restore_backup(engine=engine, db=db, backup_file=target)
-            self.stdout.write(self.style.SUCCESS(f"Restore completed from: {target}"))
 
+            if not target.is_file():
+                raise CommandError(
+                    "Specify a valid --file path to restore."
+                )
+
+            # Verify checksum whenever a sidecar exists.
+            if Path(f"{target}.sha256").is_file():
+                _verify_checksum(target)
+
+            self._restore_backup(
+                engine=engine,
+                db=db,
+                backup_file=target,
+            )
+
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Restore completed from: {target}"
+                )
+            )
     def _create_backup(self, *, engine: str, db: dict, out_dir: Path) -> Path:
         stamp = datetime.now(dt_timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         if "sqlite" in engine:
@@ -104,7 +192,7 @@ class Command(BaseCommand):
                 "-f", str(dest),
                 str(db["NAME"]),
             ]
-            subprocess.run(cmd, env=env, check=True)
+            _run_subprocess(cmd, env=env)
             return dest
 
         if "mysql" in engine:
@@ -120,7 +208,11 @@ class Command(BaseCommand):
                 str(db["NAME"]),
             ]
             with dest.open("wb") as f:
-                subprocess.run(cmd, env=env, stdout=f, check=True)
+                _run_subprocess(
+                    cmd,
+                    env=env,
+                    stdout=f,
+                )
             return dest
 
         raise CommandError(f"Unsupported database engine for backup: {engine}")
@@ -137,14 +229,16 @@ class Command(BaseCommand):
             if db.get("PASSWORD"):
                 env["PGPASSWORD"] = str(db["PASSWORD"])
             cmd = [
-                "psql",
-                "-h", str(db.get("HOST") or "localhost"),
-                "-p", str(db.get("PORT") or "5432"),
-                "-U", str(db.get("USER") or "postgres"),
-                "-d", str(db["NAME"]),
-                "-f", str(backup_file),
-            ]
-            subprocess.run(cmd, env=env, check=True)
+                    "psql",
+                    "-h", str(db.get("HOST") or "localhost"),
+                    "-p", str(db.get("PORT") or "5432"),
+                    "-U", str(db.get("USER") or "postgres"),
+                    "-d", str(db["NAME"]),
+                    "-v", "ON_ERROR_STOP=1",
+                    "-f", str(backup_file),
+                ]
+
+            _run_subprocess(cmd, env=env)
             return
 
         if "mysql" in engine:
@@ -159,15 +253,45 @@ class Command(BaseCommand):
                 str(db["NAME"]),
             ]
             with backup_file.open("rb") as f:
-                subprocess.run(cmd, env=env, stdin=f, check=True)
+                _run_subprocess(cmd, env=env, stdin=f,)
             return
 
         raise CommandError(f"Unsupported database engine for restore: {engine}")
 
-    def _rotate_backups(self, *, out_dir: Path, retention_days: int) -> None:
-        cutoff = datetime.now(dt_timezone.utc) - timedelta(days=retention_days)
+    # def _rotate_backups(self, *, out_dir: Path, retention_days: int) -> None:
+    #     cutoff = datetime.now(dt_timezone.utc) - timedelta(days=retention_days)
+    #     for path in out_dir.iterdir():
+    #         if path.is_file():
+    #             modified = datetime.fromtimestamp(path.stat().st_mtime, tz=dt_timezone.utc)
+    #             if modified < cutoff:
+    #                 path.unlink(missing_ok=True)
+    
+    def _rotate_backups(
+        self,
+        *,
+        out_dir: Path,
+        retention_days: int,
+    ) -> None:
+        cutoff = (
+            datetime.now(dt_timezone.utc)
+            - timedelta(days=retention_days)
+        )
+
         for path in out_dir.iterdir():
-            if path.is_file():
-                modified = datetime.fromtimestamp(path.stat().st_mtime, tz=dt_timezone.utc)
-                if modified < cutoff:
-                    path.unlink(missing_ok=True)
+            if not path.is_file():
+                continue
+
+            # Process backup files, not checksum sidecars.
+            if path.name.endswith(".sha256"):
+                continue
+
+            modified = datetime.fromtimestamp(
+                path.stat().st_mtime,
+                tz=dt_timezone.utc,
+            )
+
+            if modified < cutoff:
+                path.unlink(missing_ok=True)
+
+                checksum_path = Path(f"{path}.sha256")
+                checksum_path.unlink(missing_ok=True)

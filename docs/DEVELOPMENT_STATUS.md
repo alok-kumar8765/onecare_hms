@@ -41,3 +41,9 @@
 - **Tests Failed:** 0.
 - **Current Blockers:** None.
 - **Next Logical Task:** Proceed to remaining planned features or production deployment prep.
+
+# OneCare HMS — Project Status
+
+- **Last Verified Test Run:** `36 passed` in `pytest` (`25.78s`), `manage.py check --settings=config.settings.dev` (`0` issues), `makemigrations --check --dry-run --settings=config.settings.dev` (`No changes detected`).
+- **Completed / Verified in Suite:** Multi-tenant & branch scoping, RBAC/2FA/audit logs, licensing & 7-day trial/clock-rollback guards, clinic/OPD, FEFO pharmacy & allergy override, lab verification gate, IPD bed lock/transfer/ledger, GST summary & CSV export, invoice/prescription/lab print HTML views, locked footer, backup/restore CLI & unit/integration coverage.
+- **In Progress / Remaining:** Role-gated backup web endpoints (`/core/backup/...`) live browser & Google Drive credential verification, full dashboard/form/CSRF/JS template audit across all Jinja2 templates, and production (`config/settings/prod.py`) + PostgreSQL/MySQL hardening.

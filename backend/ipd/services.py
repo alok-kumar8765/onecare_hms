@@ -32,6 +32,66 @@ def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+# @transaction.atomic
+# def create_ward_with_beds(
+#     *,
+#     tenant_id,
+#     code: str,
+#     name: str,
+#     ward_type: str = WardType.GENERAL,
+#     daily_charge: Decimal = Decimal("1000.00"),
+#     gst_rate_percent: Decimal = Decimal("0.00"),
+#     bed_count: int = 1,
+#     branch_id=None,
+#     actor=None,
+#     request=None,
+# ) -> tuple[Ward, List[Bed]]:
+#     clean_code = code.strip().upper()
+#     if not clean_code or not name.strip():
+#         raise ValueError("Ward code and name are required.")
+#     if bed_count < 0:
+#         raise ValueError("Bed count cannot be negative.")
+
+#     ward, _ = Ward.objects.update_or_create(
+#         tenant_id=tenant_id,
+#         code=clean_code,
+#         defaults={
+#             "branch_id": branch_id,
+#             "name": name.strip(),
+#             "ward_type": ward_type or WardType.GENERAL,
+#             "daily_charge": _quantize_money(daily_charge),
+#             "gst_rate_percent": gst_rate_percent,
+#             "is_active": True,
+#         },
+#     )
+
+#     created_beds: List[Bed] = []
+#     for idx in range(1, bed_count + 1):
+#         bed_no = f"{clean_code}-B{idx:02d}"
+#         bed, _ = Bed.objects.get_or_create(
+#             tenant_id=tenant_id,
+#             bed_number=bed_no,
+#             defaults={
+#                 "branch_id": branch_id,
+#                 "ward": ward,
+#                 "status": BedStatus.AVAILABLE,
+#             },
+#         )
+#         created_beds.append(bed)
+
+#     record_audit_log(
+#         action="ipd.ward.saved",
+#         resource_type="Ward",
+#         resource_id=ward.id,
+#         actor=actor,
+#         tenant_id=tenant_id,
+#         branch_id=branch_id,
+#         request=request,
+#         metadata={"code": ward.code, "beds_ensured": len(created_beds)},
+#     )
+#     return ward, created_beds
+
+
 @transaction.atomic
 def create_ward_with_beds(
     *,
@@ -47,16 +107,24 @@ def create_ward_with_beds(
     request=None,
 ) -> tuple[Ward, List[Bed]]:
     clean_code = code.strip().upper()
+
     if not clean_code or not name.strip():
         raise ValueError("Ward code and name are required.")
+
     if bed_count < 0:
         raise ValueError("Bed count cannot be negative.")
+
+    # Validate branch belongs to the requested tenant.
+    scoped_branch_id = resolve_scoped_branch_id(
+        tenant_id=tenant_id,
+        requested_branch_id=branch_id,
+    )
 
     ward, _ = Ward.objects.update_or_create(
         tenant_id=tenant_id,
         code=clean_code,
         defaults={
-            "branch_id": branch_id,
+            "branch_id": scoped_branch_id,
             "name": name.strip(),
             "ward_type": ward_type or WardType.GENERAL,
             "daily_charge": _quantize_money(daily_charge),
@@ -66,17 +134,20 @@ def create_ward_with_beds(
     )
 
     created_beds: List[Bed] = []
+
     for idx in range(1, bed_count + 1):
         bed_no = f"{clean_code}-B{idx:02d}"
+
         bed, _ = Bed.objects.get_or_create(
             tenant_id=tenant_id,
             bed_number=bed_no,
             defaults={
-                "branch_id": branch_id,
+                "branch_id": scoped_branch_id,
                 "ward": ward,
                 "status": BedStatus.AVAILABLE,
             },
         )
+
         created_beds.append(bed)
 
     record_audit_log(
@@ -85,10 +156,14 @@ def create_ward_with_beds(
         resource_id=ward.id,
         actor=actor,
         tenant_id=tenant_id,
-        branch_id=branch_id,
+        branch_id=scoped_branch_id,
         request=request,
-        metadata={"code": ward.code, "beds_ensured": len(created_beds)},
+        metadata={
+            "code": ward.code,
+            "beds_ensured": len(created_beds),
+        },
     )
+
     return ward, created_beds
 
 
@@ -445,20 +520,20 @@ def compute_ipd_running_ledger(*, tenant_id, admission_id, as_of=None) -> dict:
     end_time = admission.discharged_at or as_of or timezone.now()
     elapsed_seconds = max((end_time - admission.admitted_at).total_seconds(), 0)
     billable_days = max(1, ceil(elapsed_seconds / 86400))
-    bed_charges = _q(Decimal(billable_days) * admission.ward.daily_charge)
+    bed_charges = _quantize_money(Decimal(billable_days) * admission.ward.daily_charge)
 
     items_subtotal = (
         IPDBillingItem.objects.filter(admission=admission).aggregate(s=Sum("line_total"))["s"]
         or Decimal("0.00")
     )
-    items_subtotal = _q(items_subtotal)
-    running_total = _q(bed_charges + items_subtotal)
+    items_subtotal = _quantize_money(items_subtotal)
+    running_total = _quantize_money(bed_charges + items_subtotal)
 
     return {
         "admission_number": admission.admission_number,
         "status": admission.status,
         "billable_days": billable_days,
-        "daily_charge": _q(admission.ward.daily_charge),
+        "daily_charge": _quantize_money(admission.ward.daily_charge),
         "accrued_bed_charges": bed_charges,
         "itemized_charges": items_subtotal,
         "running_total": running_total,

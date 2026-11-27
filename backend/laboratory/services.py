@@ -150,12 +150,40 @@ def create_lab_order(
     return order
 
 
+#@transaction.atomic
+#def mark_sample_collected(*, tenant_id, order_id, actor=None, request=None) -> LabSample:
+#    order = LabOrder.objects.select_related("sample").filter(id=order_id, tenant_id=tenant_id).first()
+#    if not order:
+#        raise ValueError("Lab order not found in your organization.")
+#    sample = order.sample
+#    sample.collected_at = timezone.now()
+#    sample.collected_by = actor
+#    sample.save(update_fields=["collected_at", "collected_by", "updated_at"])
+
+#    order.status = LabOrderStatus.SAMPLE_COLLECTED
+#    order.save(update_fields=["status", "updated_at"])
+
+#    record_audit_log(
+#        action="lab.sample.collected",
+#        resource_type="LabSample",
+#        resource_id=sample.id,
+#        actor=actor,
+#        tenant_id=tenant_id,
+#        branch_id=order.branch_id,
+#        request=request,
+#        metadata={"barcode": sample.barcode, "order_number": order.order_number},
+#    )
+#    return sample
+
 @transaction.atomic
 def mark_sample_collected(*, tenant_id, order_id, actor=None, request=None) -> LabSample:
     order = LabOrder.objects.select_related("sample").filter(id=order_id, tenant_id=tenant_id).first()
     if not order:
         raise ValueError("Lab order not found in your organization.")
-    sample = order.sample
+    sample = getattr(order, "sample", None)
+    if not sample:
+        raise ValueError("No sample record found for this lab order.")
+
     sample.collected_at = timezone.now()
     sample.collected_by = actor
     sample.save(update_fields=["collected_at", "collected_by", "updated_at"])
@@ -192,8 +220,29 @@ def record_test_result(
         .filter(id=order_item_id, order__tenant_id=tenant_id)
         .first()
     )
+
     if not item:
-        raise ValueError("Lab order item not found in your organization.")
+        raise ValueError(
+            "Lab order item not found in your organization."
+        )
+
+    # Prevent modifications after order verification or delivery.
+    if item.order.status in {
+        LabOrderStatus.VERIFIED,
+        LabOrderStatus.DELIVERED,
+    }:
+        raise ValueError(
+            "Cannot modify results after a lab order is verified or delivered."
+        )
+
+    # Prevent modifications to an already verified result.
+    existing_result = getattr(item, "result", None)
+
+    if existing_result and getattr(existing_result, "is_verified", False):
+        raise ValueError(
+            "Cannot modify an already verified lab result."
+        )
+
     if not observed_value or not observed_value.strip():
         raise ValueError("Observed result value is required.")
 
@@ -215,9 +264,14 @@ def record_test_result(
         },
     )
 
-    if item.order.status in {LabOrderStatus.ORDERED, LabOrderStatus.SAMPLE_COLLECTED}:
+    if item.order.status in {
+        LabOrderStatus.ORDERED,
+        LabOrderStatus.SAMPLE_COLLECTED,
+    }:
         item.order.status = LabOrderStatus.IN_PROGRESS
-        item.order.save(update_fields=["status", "updated_at"])
+        item.order.save(
+            update_fields=["status", "updated_at"]
+        )
 
     record_audit_log(
         action="lab.result.entered",
@@ -227,10 +281,13 @@ def record_test_result(
         tenant_id=tenant_id,
         branch_id=item.order.branch_id,
         request=request,
-        metadata={"test_code": item.test.code, "is_abnormal": is_abnormal},
+        metadata={
+            "test_code": item.test.code,
+            "is_abnormal": is_abnormal,
+        },
     )
-    return result
 
+    return result
 
 @transaction.atomic
 def verify_lab_order(*, tenant_id, order_id, actor=None, request=None) -> LabOrder:

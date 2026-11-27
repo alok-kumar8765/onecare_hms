@@ -31,6 +31,16 @@ def _q(val: Decimal) -> Decimal:
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
+def _generate_invoice_number() -> str:
+    for _ in range(10):
+        candidate = (
+            f"INV-{timezone.localdate().strftime('%Y%m%d')}-"
+            f"{uuid.uuid4().hex[:6].upper()}"
+        )
+        if not Invoice.objects.filter(invoice_number=candidate).exists():
+            return candidate
+
+    raise RuntimeError("Unable to generate a unique invoice number.")
 
 @transaction.atomic
 def create_invoice_with_items(
@@ -88,10 +98,7 @@ def create_invoice_with_items(
         )
     )
 
-    inv_no = (
-        f"INV-{timezone.localdate().strftime('%Y%m%d')}-"
-        f"{uuid.uuid4().hex[:6].upper()}"
-    )
+    inv_no = _generate_invoice_number()
 
     invoice = Invoice.objects.create(
         tenant_id=tenant_id,
@@ -276,9 +283,14 @@ def record_expense(
     if clean_amount <= Decimal("0.00"):
         raise ValueError("Expense amount must be greater than zero.")
 
+    scoped_branch_id = resolve_scoped_branch_id(
+    tenant_id=tenant_id,
+    requested_branch_id=branch_id,
+    )
+
     entry = ExpenseEntry.objects.create(
         tenant_id=tenant_id,
-        branch_id=branch_id,
+        branch_id=scoped_branch_id,
         title=title.strip(),
         category=(category or "OPERATIONAL").strip().upper(),
         expense_date=expense_date or timezone.localdate(),
@@ -390,29 +402,34 @@ def build_gst_return_summary(*, tenant_id, branch_id=None) -> dict:
         for item in inv.items.all():
             qty = Decimal(str(getattr(item, "quantity", 1) or 1))
             unit_price = Decimal(str(getattr(item, "unit_price", Decimal("0.00")) or Decimal("0.00")))
-            taxable = _q(qty * unit_price)
-            rate = _q(Decimal(str(getattr(item, "gst_rate_percent", Decimal("0.00")) or Decimal("0.00"))))
-            tax_amt = _q((taxable * rate) / Decimal("100"))
-            cgst = _q(tax_amt / Decimal("2"))
-            sgst = _q(tax_amt - cgst)
+            #taxable = _q(qty * unit_price)
+            #rate = _q(Decimal(str(getattr(item, "gst_rate_percent", Decimal("0.00")) or Decimal("0.00"))))
+            taxable = _quantize_money(qty * unit_price)
+            rate = _quantize_money(Decimal(str(
+                getattr(item, "gst_rate_percent", Decimal("0.00"))
+                or Decimal("0.00")
+            )))
+            tax_amt = _quantize_money((taxable * rate) / Decimal("100"))
+            cgst = _quantize_money(tax_amt / Decimal("2"))
+            sgst = _quantize_money(tax_amt - cgst)
             hsn = (getattr(item, "hsn_sac_code", "") or "").strip() or "UNSPECIFIED"
 
             r_bucket = rate_buckets[str(rate)]
-            r_bucket["taxable_value"] = _q(r_bucket["taxable_value"] + taxable)
-            r_bucket["cgst"] = _q(r_bucket["cgst"] + cgst)
-            r_bucket["sgst"] = _q(r_bucket["sgst"] + sgst)
-            r_bucket["total_tax"] = _q(r_bucket["total_tax"] + tax_amt)
+            r_bucket["taxable_value"] = _quantize_money(r_bucket["taxable_value"] + taxable)
+            r_bucket["cgst"] = _quantize_money(r_bucket["cgst"] + cgst)
+            r_bucket["sgst"] = _quantize_money(r_bucket["sgst"] + sgst)
+            r_bucket["total_tax"] = _quantize_money(r_bucket["total_tax"] + tax_amt)
             if str(rate) not in seen_rates_for_invoice:
                 r_bucket["invoice_count"] += 1
                 seen_rates_for_invoice.add(str(rate))
 
             h_bucket = hsn_buckets[hsn]
             h_bucket["hsn_sac_code"] = hsn
-            h_bucket["quantity"] = _q(h_bucket["quantity"] + qty)
-            h_bucket["taxable_value"] = _q(h_bucket["taxable_value"] + taxable)
-            h_bucket["cgst"] = _q(h_bucket["cgst"] + cgst)
-            h_bucket["sgst"] = _q(h_bucket["sgst"] + sgst)
-            h_bucket["total_value"] = _q(h_bucket["total_value"] + taxable + tax_amt)
+            h_bucket["quantity"] = _quantize_money(h_bucket["quantity"] + qty)
+            h_bucket["taxable_value"] = _quantize_money(h_bucket["taxable_value"] + taxable)
+            h_bucket["cgst"] = _quantize_money(h_bucket["cgst"] + cgst)
+            h_bucket["sgst"] = _quantize_money(h_bucket["sgst"] + sgst)
+            h_bucket["total_value"] = _quantize_money(h_bucket["total_value"] + taxable + tax_amt)
 
     return {
         "gstr_3b_by_rate": [

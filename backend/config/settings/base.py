@@ -1,5 +1,4 @@
-from pathlib import Path
-import environ
+
 from pathlib import Path
 import environ
 import os
@@ -21,14 +20,25 @@ env_file = PROJECT_ROOT / ".env"
 if env_file.exists():
     environ.Env.read_env(str(env_file))
 
-SECRET_KEY = env("SECRET_KEY", default="dev-only-insecure-secret-key-do-not-use-in-prod")
+SECRET_KEY = env(
+    "SECRET_KEY",
+    default="dev-only-insecure-secret-key-do-not-use-in-prod"
+)
+
 DEBUG = env("DEBUG")
 DJANGO_ENV = env("DJANGO_ENV")
-ALLOWED_HOSTS = [h.strip() for h in env("ALLOWED_HOSTS", default="localhost,127.0.0.1").split(",") if h.strip()]
+
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in env("ALLOWED_HOSTS", default="localhost,127.0.0.1").split(",")
+    if h.strip()
+]
 
 AUTH_USER_MODEL = "accounts.User"
+
 MAX_FAILED_LOGIN_ATTEMPTS = env("MAX_FAILED_LOGIN_ATTEMPTS")
 LOGIN_LOCKOUT_MINUTES = env("LOGIN_LOCKOUT_MINUTES")
+
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -49,6 +59,7 @@ INSTALLED_APPS = [
     "billing",
 ]
 
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -61,7 +72,9 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+
 ROOT_URLCONF = "config.urls"
+
 
 TEMPLATES = [
     {
@@ -86,36 +99,59 @@ TEMPLATES = [
     },
 ]
 
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
-        #"ATOMIC_REQUESTS": False,
+        # "ATOMIC_REQUESTS": False,
     }
 }
 
+
 WSGI_APPLICATION = "config.wsgi.application"
 
+
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 10}},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {"min_length": 10},
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"
+    },
 ]
+
 
 LANGUAGE_CODE = "en-in"
 TIME_ZONE = "Asia/Kolkata"
 USE_I18N = True
 USE_TZ = True
 
+
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
+
 MEDIA_URL = "/media/"
-MEDIA_ROOT = Path(env("LOCAL_MEDIA_ROOT", default=str(PROJECT_ROOT / "var" / "media")))
-BACKUP_DIR = Path(env("BACKUP_DIR", default=str(PROJECT_ROOT / "var" / "backups")))
+MEDIA_ROOT = Path(
+    env("LOCAL_MEDIA_ROOT", default=str(PROJECT_ROOT / "var" / "media"))
+)
+
+BACKUP_DIR = Path(
+    env("BACKUP_DIR", default=str(PROJECT_ROOT / "var" / "backups"))
+)
+
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+
+# Django REST Framework Configuration
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
@@ -123,23 +159,6 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-}
-
-LICENSE_PROVIDER = env("LICENSE_PROVIDER")
-LICENSE_SERVER_URL = env("LICENSE_SERVER_URL", default="")
-LICENSE_PUBLIC_KEY = env("LICENSE_PUBLIC_KEY", default="")
-LICENSE_SIGNING_SECRET = env("LICENSE_SIGNING_SECRET", default="")
-LICENSE_OFFLINE_GRACE_HOURS = env("LICENSE_OFFLINE_GRACE_HOURS")
-
-TRUSTED_PROXY_IPS = [
-    ip.strip()
-    for ip in os.environ.get("TRUSTED_PROXY_IPS", "127.0.0.1,::1").split(",")
-    if ip.strip()
-]
-
-# Merge into existing REST_FRAMEWORK dict in backend/config/settings/base.py
-REST_FRAMEWORK = {
-    **globals().get("REST_FRAMEWORK", {}),
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
@@ -149,3 +168,20 @@ REST_FRAMEWORK = {
         "user": os.environ.get("DRF_THROTTLE_USER", "240/min"),
     },
 }
+
+
+LICENSE_PROVIDER = env("LICENSE_PROVIDER")
+LICENSE_SERVER_URL = env("LICENSE_SERVER_URL", default="")
+LICENSE_PUBLIC_KEY = env("LICENSE_PUBLIC_KEY", default="")
+LICENSE_SIGNING_SECRET = env("LICENSE_SIGNING_SECRET", default="")
+LICENSE_OFFLINE_GRACE_HOURS = env("LICENSE_OFFLINE_GRACE_HOURS")
+
+
+TRUSTED_PROXY_IPS = [
+    ip.strip()
+    for ip in os.environ.get(
+        "TRUSTED_PROXY_IPS",
+        "127.0.0.1,::1"
+    ).split(",")
+    if ip.strip()
+]

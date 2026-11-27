@@ -9,7 +9,7 @@ from core.import_export import export_rows_to_csv
 from .models import Appointment, AppointmentStatus, OPDEncounter, Patient, Prescription, PrescriptionItem
 from django.db import transaction
 from core.scoping import resolve_scoped_branch_id, validate_patient_branch_alignment
-from .models import OPDEncounter, Patient
+from .models import Appointment, AppointmentStatus, OPDEncounter, Patient, Prescription, PrescriptionItem
 
 
 @transaction.atomic
@@ -92,6 +92,65 @@ def find_duplicate_patients(
     return qs.filter(cond).order_by("-created_at")
 
 
+# @transaction.atomic
+# def register_patient(
+#     *,
+#     tenant_id,
+#     full_name: str,
+#     branch_id=None,
+#     gender: str = "OTHER",
+#     date_of_birth: Optional[date] = None,
+#     phone_number: str = "",
+#     email: str = "",
+#     abha_number: str = "",
+#     blood_group: str = "",
+#     address: str = "",
+#     allergies_notes: str = "",
+#     photo=None,
+#     allow_duplicate: bool = False,
+#     actor=None,
+#     request=None,
+# ) -> Tuple[Patient, List[Patient]]:
+#     duplicates = list(
+#         find_duplicate_patients(
+#             tenant_id=tenant_id,
+#             full_name=full_name,
+#             phone_number=phone_number,
+#             abha_number=abha_number,
+#             date_of_birth=date_of_birth,
+#         )
+#     )
+#     if duplicates and not allow_duplicate:
+#         raise ValueError("Potential duplicate patient record found; confirm duplicate override if intended.")
+
+#     uhid = f"OC-{timezone.localdate().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+#     patient = Patient.objects.create(
+#         tenant_id=tenant_id,
+#         branch_id=branch_id,
+#         uhid=uhid,
+#         full_name=full_name.strip(),
+#         gender=gender,
+#         date_of_birth=date_of_birth,
+#         phone_number=phone_number.strip(),
+#         email=email.strip(),
+#         abha_number=abha_number.strip(),
+#         blood_group=blood_group.strip(),
+#         address=address.strip(),
+#         allergies_notes=allergies_notes.strip(),
+#         photo=photo,
+#     )
+#     record_audit_log(
+#         action="clinic.patient.registered",
+#         resource_type="Patient",
+#         resource_id=patient.id,
+#         actor=actor,
+#         tenant_id=tenant_id,
+#         branch_id=branch_id,
+#         request=request,
+#         metadata={"uhid": patient.uhid, "duplicates_found": len(duplicates)},
+#     )
+#     return patient, duplicates
+
 @transaction.atomic
 def register_patient(
     *,
@@ -111,6 +170,10 @@ def register_patient(
     actor=None,
     request=None,
 ) -> Tuple[Patient, List[Patient]]:
+    scoped_branch_id = resolve_scoped_branch_id(
+        tenant_id=tenant_id,
+        requested_branch_id=branch_id,
+    )
     duplicates = list(
         find_duplicate_patients(
             tenant_id=tenant_id,
@@ -126,7 +189,7 @@ def register_patient(
     uhid = f"OC-{timezone.localdate().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     patient = Patient.objects.create(
         tenant_id=tenant_id,
-        branch_id=branch_id,
+        branch_id=scoped_branch_id,
         uhid=uhid,
         full_name=full_name.strip(),
         gender=gender,
@@ -145,12 +208,54 @@ def register_patient(
         resource_id=patient.id,
         actor=actor,
         tenant_id=tenant_id,
-        branch_id=branch_id,
+        branch_id=scoped_branch_id,
         request=request,
         metadata={"uhid": patient.uhid, "duplicates_found": len(duplicates)},
     )
     return patient, duplicates
 
+# @transaction.atomic
+# def schedule_appointment(
+#     *,
+#     tenant_id,
+#     patient: Patient,
+#     doctor=None,
+#     branch_id=None,
+#     visit_date: Optional[date] = None,
+#     reason: str = "",
+#     actor=None,
+#     request=None,
+# ) -> Appointment:
+#     target_date = visit_date or timezone.localdate()
+#     existing_max = (
+#         Appointment.objects.filter(tenant_id=tenant_id, visit_date=target_date)
+#         .order_by("-token_number")
+#         .values_list("token_number", flat=True)
+#         .first()
+#     )
+#     next_token = (existing_max or 0) + 1
+
+#     appt = Appointment.objects.create(
+#         tenant_id=tenant_id,
+#         branch_id=branch_id or patient.branch_id,
+#         patient=patient,
+#         doctor=doctor,
+#         visit_date=target_date,
+#         token_number=next_token,
+#         reason=reason.strip(),
+#         status=AppointmentStatus.WAITING,
+#     )
+#     record_audit_log(
+#         action="clinic.appointment.scheduled",
+#         resource_type="Appointment",
+#         resource_id=appt.id,
+#         actor=actor,
+#         tenant_id=tenant_id,
+#         branch_id=appt.branch_id,
+#         request=request,
+#         metadata={"token_number": appt.token_number, "visit_date": str(target_date)},
+#     )
+#     return appt
 
 @transaction.atomic
 def schedule_appointment(
@@ -164,6 +269,16 @@ def schedule_appointment(
     actor=None,
     request=None,
 ) -> Appointment:
+    scoped_branch_id = resolve_scoped_branch_id(
+        tenant_id=tenant_id,
+        requested_branch_id=branch_id,
+        fallback_branch_id=getattr(patient, "branch_id", None),
+    )
+    validate_patient_branch_alignment(
+        tenant_id=tenant_id,
+        patient=patient,
+        branch_id=scoped_branch_id,
+    )
     target_date = visit_date or timezone.localdate()
     existing_max = (
         Appointment.objects.filter(tenant_id=tenant_id, visit_date=target_date)
@@ -175,7 +290,7 @@ def schedule_appointment(
 
     appt = Appointment.objects.create(
         tenant_id=tenant_id,
-        branch_id=branch_id or patient.branch_id,
+        branch_id=scoped_branch_id,
         patient=patient,
         doctor=doctor,
         visit_date=target_date,
@@ -194,8 +309,6 @@ def schedule_appointment(
         metadata={"token_number": appt.token_number, "visit_date": str(target_date)},
     )
     return appt
-
-
 @transaction.atomic
 def create_opd_encounter_with_prescription(
     *,
@@ -214,9 +327,19 @@ def create_opd_encounter_with_prescription(
     actor=None,
     request=None,
 ) -> Tuple[OPDEncounter, Prescription]:
+    scoped_branch_id = resolve_scoped_branch_id(
+        tenant_id=tenant_id,
+        requested_branch_id=branch_id,
+        fallback_branch_id=getattr(patient, "branch_id", None),
+    )
+    validate_patient_branch_alignment(
+        tenant_id=tenant_id,
+        patient=patient,
+        branch_id=scoped_branch_id,
+    )
     encounter = OPDEncounter.objects.create(
         tenant_id=tenant_id,
-        branch_id=branch_id or patient.branch_id,
+        branch_id=scoped_branch_id,
         patient=patient,
         appointment=appointment,
         doctor=doctor or actor,
@@ -261,6 +384,71 @@ def create_opd_encounter_with_prescription(
         metadata={"patient_id": str(patient.id), "diagnosis": encounter.diagnosis},
     )
     return encounter, prescription
+# @transaction.atomic
+# def create_opd_encounter_with_prescription(
+#     *,
+#     tenant_id,
+#     patient: Patient,
+#     doctor=None,
+#     appointment: Optional[Appointment] = None,
+#     branch_id=None,
+#     chief_complaint: str,
+#     vitals_summary: str = "",
+#     clinical_notes: str = "",
+#     diagnosis: str = "",
+#     follow_up_date: Optional[date] = None,
+#     advice: str = "",
+#     items: Optional[List[Dict[str, Any]]] = None,
+#     actor=None,
+#     request=None,
+# ) -> Tuple[OPDEncounter, Prescription]:
+#     encounter = OPDEncounter.objects.create(
+#         tenant_id=tenant_id,
+#         branch_id=branch_id or patient.branch_id,
+#         patient=patient,
+#         appointment=appointment,
+#         doctor=doctor or actor,
+#         encounter_date=timezone.localdate(),
+#         chief_complaint=chief_complaint.strip(),
+#         vitals_summary=vitals_summary.strip(),
+#         clinical_notes=clinical_notes.strip(),
+#         diagnosis=diagnosis.strip(),
+#         follow_up_date=follow_up_date,
+#     )
+#     prescription = Prescription.objects.create(
+#         tenant_id=tenant_id,
+#         branch_id=encounter.branch_id,
+#         encounter=encounter,
+#         patient=patient,
+#         prescribed_by=doctor or actor,
+#         advice=advice.strip(),
+#     )
+#     for item in items or []:
+#         if item.get("medicine_name"):
+#             PrescriptionItem.objects.create(
+#                 prescription=prescription,
+#                 medicine_name=item["medicine_name"].strip(),
+#                 dosage=(item.get("dosage") or "1 tab").strip(),
+#                 frequency=(item.get("frequency") or "Once daily").strip(),
+#                 duration=(item.get("duration") or "5 days").strip(),
+#                 instructions=(item.get("instructions") or "").strip(),
+#             )
+
+#     if appointment:
+#         appointment.status = AppointmentStatus.COMPLETED
+#         appointment.save(update_fields=["status", "updated_at"])
+
+#     record_audit_log(
+#         action="clinic.encounter.created",
+#         resource_type="OPDEncounter",
+#         resource_id=encounter.id,
+#         actor=actor or doctor,
+#         tenant_id=tenant_id,
+#         branch_id=encounter.branch_id,
+#         request=request,
+#         metadata={"patient_id": str(patient.id), "diagnosis": encounter.diagnosis},
+#     )
+#     return encounter, prescription
 
 
 def filter_encounters_queryset(

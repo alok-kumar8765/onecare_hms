@@ -27,9 +27,17 @@ def _can_manage_backups(user) -> bool:
     return role in ALLOWED_BACKUP_ROLES
 
 
-def _backup_dir() -> Path:
-    return Path(settings.BASE_DIR) / "backups"
+# def _backup_dir() -> Path:
+#     return Path(settings.BASE_DIR) / "backups"
 
+def _backup_dir() -> Path:
+    return Path(
+        getattr(
+            settings,
+            "BACKUP_DIR",
+            Path(settings.BASE_DIR) / "backups",
+        )
+    )
 
 def _latest_backup_file(out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -74,8 +82,14 @@ def backup_download_view(request):
         branch_id=getattr(request.user, "primary_branch_id", None),
         request=request,
     )
-    return FileResponse(open(artifact, "rb"), as_attachment=True, filename=artifact.name)
+    # return FileResponse(open(artifact, "rb"), as_attachment=True, filename=artifact.name)
+    file_handle = artifact.open("rb")
 
+    return FileResponse(
+        file_handle,
+        as_attachment=True,
+        filename=artifact.name,
+    )
 
 @login_required
 @require_POST
@@ -107,46 +121,166 @@ def backup_drive_upload_view(request):
     return redirect(request.META.get("HTTP_REFERER") or "/")
 
 
+# @login_required
+# @require_POST
+# def backup_restore_view(request):
+#     if not _can_manage_backups(request.user):
+#         return HttpResponseForbidden("Access denied for backup operations.")
+
+#     if request.POST.get("confirm_restore") != "1":
+#         request.session["backup_message"] = "Please confirm restore before proceeding."
+#         return redirect(request.META.get("HTTP_REFERER") or "/")
+
+#     uploaded_file = request.FILES.get("backup_file")
+#     drive_file_id = (request.POST.get("drive_file_id") or "").strip()
+
+#     try:
+#         with tempfile.TemporaryDirectory() as tmpdir:
+#             staged_path = Path(tmpdir) / (uploaded_file.name if uploaded_file else f"drive_{drive_file_id}.sqlite3")
+#             if uploaded_file:
+#                 with staged_path.open("wb") as dest:
+#                     for chunk in uploaded_file.chunks():
+#                         dest.write(chunk)
+#             elif drive_file_id:
+#                 download_backup_from_google_drive(drive_file_id, staged_path)
+#             else:
+#                 raise ValueError("Provide a local backup file or a Google Drive file ID.")
+
+#             _validate_sqlite_header_if_needed(staged_path)
+#             call_command("backup_hms", mode="restore", file=str(staged_path))
+
+#         record_audit_log(
+#             action="backup.restore",
+#             resource_type="DatabaseBackup",
+#             resource_id=drive_file_id or (uploaded_file.name if uploaded_file else "local"),
+#             actor=request.user,
+#             tenant_id=getattr(request.user, "tenant_id", None),
+#             branch_id=getattr(request.user, "primary_branch_id", None),
+#             request=request,
+#             metadata={"source": "drive" if drive_file_id else "local_upload"},
+#         )
+#         request.session["backup_message"] = "Database backup restored successfully."
+#     except Exception as exc:
+#         request.session["backup_message"] = f"Restore failed: {exc}"
+
+#     return redirect(request.META.get("HTTP_REFERER") or "/")
+
+
 @login_required
 @require_POST
 def backup_restore_view(request):
     if not _can_manage_backups(request.user):
-        return HttpResponseForbidden("Access denied for backup operations.")
+        return HttpResponseForbidden(
+            "Access denied for backup operations."
+        )
 
     if request.POST.get("confirm_restore") != "1":
-        request.session["backup_message"] = "Please confirm restore before proceeding."
+        request.session["backup_message"] = (
+            "Please confirm restore before proceeding."
+        )
         return redirect(request.META.get("HTTP_REFERER") or "/")
 
     uploaded_file = request.FILES.get("backup_file")
-    drive_file_id = (request.POST.get("drive_file_id") or "").strip()
+    uploaded_checksum = request.FILES.get("checksum_file")
+    drive_file_id = (
+        request.POST.get("drive_file_id") or ""
+    ).strip()
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            staged_path = Path(tmpdir) / (uploaded_file.name if uploaded_file else f"drive_{drive_file_id}.sqlite3")
             if uploaded_file:
+                safe_filename = Path(uploaded_file.name).name
+                staged_path = Path(tmpdir) / safe_filename
+
                 with staged_path.open("wb") as dest:
                     for chunk in uploaded_file.chunks():
                         dest.write(chunk)
+
+                # Stage uploaded SHA-256 sidecar if provided.
+                if uploaded_checksum:
+                    checksum_path = Path(
+                        f"{staged_path}.sha256"
+                    )
+
+                    with checksum_path.open("wb") as dest:
+                        for chunk in uploaded_checksum.chunks():
+                            dest.write(chunk)
+
             elif drive_file_id:
-                download_backup_from_google_drive(drive_file_id, staged_path)
+                staged_path = (
+                    Path(tmpdir) /
+                    f"drive_{drive_file_id}.sqlite3"
+                )
+                download_backup_from_google_drive(
+                    drive_file_id,
+                    staged_path,
+                )
+
             else:
-                raise ValueError("Provide a local backup file or a Google Drive file ID.")
+                raise ValueError(
+                    "Provide a local backup file or a Google Drive file ID."
+                )
+
+            if not staged_path.is_file():
+                raise ValueError("Backup file was not downloaded or uploaded.")
 
             _validate_sqlite_header_if_needed(staged_path)
-            call_command("backup_hms", mode="restore", file=str(staged_path))
+
+            # Verify checksum before restoring whenever sidecar exists.
+            checksum_path = Path(f"{staged_path}.sha256")
+
+            if checksum_path.is_file():
+                call_command(
+                    "backup_hms",
+                    mode="verify",
+                    backup_file=str(staged_path),
+                )
+
+            call_command(
+                "backup_hms",
+                mode="restore",
+                backup_file=str(staged_path),
+            )
 
         record_audit_log(
             action="backup.restore",
             resource_type="DatabaseBackup",
-            resource_id=drive_file_id or (uploaded_file.name if uploaded_file else "local"),
+            resource_id=(
+                drive_file_id
+                or (
+                    uploaded_file.name
+                    if uploaded_file
+                    else "local"
+                )
+            ),
             actor=request.user,
-            tenant_id=getattr(request.user, "tenant_id", None),
-            branch_id=getattr(request.user, "primary_branch_id", None),
+            tenant_id=getattr(
+                request.user, "tenant_id", None
+            ),
+            branch_id=getattr(
+                request.user, "primary_branch_id", None
+            ),
             request=request,
-            metadata={"source": "drive" if drive_file_id else "local_upload"},
+            metadata={
+                "source": (
+                    "drive" if drive_file_id
+                    else "local_upload"
+                ),
+                "checksum_verified": checksum_path.is_file()
+                if 'checksum_path' in locals()
+                else False,
+            },
         )
-        request.session["backup_message"] = "Database backup restored successfully."
-    except Exception as exc:
-        request.session["backup_message"] = f"Restore failed: {exc}"
 
-    return redirect(request.META.get("HTTP_REFERER") or "/")
+        request.session["backup_message"] = (
+            "Database backup restored successfully."
+        )
+
+    except Exception as exc:
+        request.session["backup_message"] = (
+            f"Restore failed: {exc}"
+        )
+
+    return redirect(
+        request.META.get("HTTP_REFERER") or "/"
+    )

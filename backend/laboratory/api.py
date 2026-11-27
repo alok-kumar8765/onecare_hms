@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal,InvalidOperation
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -69,8 +69,18 @@ class LabOrderListCreateAPIView(APIView):
                     tenant_id=tenant_id,
                     requested_branch_id=raw_branch_id,
                 )
-            except ValueError as exc:
-                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            # except ValueError as exc:
+            #     return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            except PermissionError as exc:
+                return Response(
+                    {"detail": str(exc)},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            except (ValueError, InvalidOperation) as exc:
+                return Response(
+                    {"detail": str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             qs = qs.filter(branch_id=scoped_branch_id)
 
         return Response(LabOrderSerializer(qs, many=True).data, status=status.HTTP_200_OK)
@@ -103,9 +113,18 @@ class LabOrderListCreateAPIView(APIView):
                 actor=request.user,
                 request=request,
             )
-        except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
+        # except ValueError as exc:
+        #     return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except (ValueError, InvalidOperation) as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         return Response(LabOrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
 
