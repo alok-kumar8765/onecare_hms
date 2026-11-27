@@ -15,6 +15,8 @@ from ipd.services import create_ward_with_beds
 from laboratory.models import LabOrder, LabOrderStatus
 from laboratory.services import mark_sample_collected, record_test_result
 from pharmacy.services import add_medicine_and_batch, dispense_fefo_sale
+import sqlite3
+from django.core.management import call_command
 
 try:
     from tenants.models import Branch, Tenant
@@ -226,3 +228,42 @@ def test_backup_hms_verify_detects_tampered_artifact(tmp_path):
     backup_file.write_bytes(b"SQLite format 3\x00tampered-data")
     with pytest.raises(Exception):
         call_command("backup_hms", mode="verify", file=str(backup_file))
+
+
+def test_backup_and_restore_on_isolated_temp_sqlite_db(tmp_path, settings):
+    source_db = tmp_path / "source_hms.sqlite3"
+    backup_dir = tmp_path / "backups"
+    target_db = tmp_path / "restored_hms.sqlite3"
+
+    conn = sqlite3.connect(str(source_db))
+    try:
+        conn.execute("CREATE TABLE smoke_check (id INTEGER PRIMARY KEY, label TEXT)")
+        conn.execute("INSERT INTO smoke_check (label) VALUES ('before-restore')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    settings.DATABASES["default"] = {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": str(source_db),
+    }
+    call_command("backup_hms", mode="backup", output_dir=str(backup_dir), retention_days=0)
+
+    artifacts = [p for p in backup_dir.iterdir() if p.is_file() and not p.name.endswith(".sha256")]
+    assert len(artifacts) == 1
+    artifact = artifacts[0]
+
+    call_command("backup_hms", mode="verify", file=str(artifact))
+
+    settings.DATABASES["default"] = {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": str(target_db),
+    }
+    call_command("backup_hms", mode="restore", file=str(artifact))
+
+    restored_conn = sqlite3.connect(str(target_db))
+    try:
+        rows = restored_conn.execute("SELECT label FROM smoke_check").fetchall()
+        assert rows == [("before-restore",)]
+    finally:
+        restored_conn.close()
