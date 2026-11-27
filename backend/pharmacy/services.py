@@ -1,12 +1,20 @@
+
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional
 import uuid
+
 from django.db import transaction
 from django.db.models import Q, QuerySet
 from django.utils import timezone
+
 from core.audit import record_audit_log
 from core.import_export import export_rows_to_csv
+from core.scoping import (
+    resolve_scoped_branch_id,
+    validate_patient_branch_alignment,
+)
+
 from .models import (
     Medicine,
     MedicineBatch,
@@ -17,31 +25,47 @@ from .models import (
     Supplier,
 )
 
-from core.scoping import resolve_scoped_branch_id, validate_patient_branch_alignment
 
-
-# At the start of your FEFO sale/dispensing service function:
-def _prepare_pharmacy_branch_and_patient(*, tenant_id, patient=None, branch_id=None):
+def _prepare_pharmacy_branch_and_patient(
+    *,
+    tenant_id,
+    patient=None,
+    branch_id=None,
+):
     scoped_branch_id = resolve_scoped_branch_id(
         tenant_id=tenant_id,
         requested_branch_id=branch_id,
         fallback_branch_id=getattr(patient, "branch_id", None) if patient else None,
     )
+
     validate_patient_branch_alignment(
         tenant_id=tenant_id,
         patient=patient,
         branch_id=scoped_branch_id,
     )
-    return scoped_branch_id
+
+    # Always return a tuple because callers unpack two values.
+    return scoped_branch_id, patient
+
+
 def _quantize_money(val: Decimal) -> Decimal:
-    return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return val.quantize(
+        Decimal("0.01"),
+        rounding=ROUND_HALF_UP,
+    )
 
 
 def search_medicines(*, tenant_id, query: str = "") -> QuerySet:
-    qs = Medicine.objects.filter(tenant_id=tenant_id, is_active=True)
+    qs = Medicine.objects.filter(
+        tenant_id=tenant_id,
+        is_active=True,
+    )
+
     q = (query or "").strip()
+
     if not q:
         return qs
+
     return qs.filter(
         Q(brand_name__icontains=q)
         | Q(generic_name__icontains=q)
@@ -68,10 +92,20 @@ def add_medicine_and_batch(
     actor=None,
     request=None,
 ) -> tuple[Medicine, MedicineBatch]:
+
+    scoped_branch_id, _ = _prepare_pharmacy_branch_and_patient(
+        tenant_id=tenant_id,
+        branch_id=branch_id,
+        patient=None,
+    )
+
     if quantity <= 0:
         raise ValueError("Batch quantity must be greater than zero.")
+
     if expiry_date <= timezone.localdate():
-        raise ValueError("Cannot add an already expired batch for dispensing.")
+        raise ValueError(
+            "Cannot add an already expired batch for dispensing."
+        )
 
     med, _ = Medicine.objects.get_or_create(
         tenant_id=tenant_id,
@@ -83,25 +117,28 @@ def add_medicine_and_batch(
             "is_controlled_drug": is_controlled_drug,
         },
     )
+
     if salt_composition and not med.salt_composition:
         med.salt_composition = salt_composition.strip()
         med.save(update_fields=["salt_composition", "updated_at"])
 
     batch = MedicineBatch.objects.create(
         tenant_id=tenant_id,
-        branch_id=branch_id,
+        branch_id=scoped_branch_id,
         medicine=med,
         supplier=supplier,
         batch_number=batch_number.strip(),
         expiry_date=expiry_date,
         quantity_on_hand=quantity,
-        purchase_rate=_quantize_money(purchase_rate if purchase_rate is not None else unit_price),
+        purchase_rate=_quantize_money(
+            purchase_rate if purchase_rate is not None else unit_price
+        ),
         mrp=_quantize_money(unit_price),
     )
 
     StockMovement.objects.create(
         tenant_id=tenant_id,
-        branch_id=branch_id,
+        branch_id=scoped_branch_id,
         medicine=med,
         batch=batch,
         movement_type=StockMovementType.PURCHASE,
@@ -109,16 +146,22 @@ def add_medicine_and_batch(
         reference_id=batch.batch_number,
         notes="Initial batch stock added",
     )
+
     record_audit_log(
         action="pharmacy.batch.added",
         resource_type="MedicineBatch",
         resource_id=batch.id,
         actor=actor,
         tenant_id=tenant_id,
-        branch_id=branch_id,
+        branch_id=scoped_branch_id,
         request=request,
-        metadata={"medicine": med.brand_name, "batch_number": batch.batch_number, "quantity": quantity},
+        metadata={
+            "medicine": med.brand_name,
+            "batch_number": batch.batch_number,
+            "quantity": quantity,
+        },
     )
+
     return med, batch
 
 
@@ -133,25 +176,47 @@ def dispense_fefo_sale(
     request=None,
 ) -> PharmacySale:
     """
-    Atomically dispenses medicines using First-Expired, First-Out (FEFO) with
-    row-level locking (`select_for_update`) on non-expired batches to prevent
-    concurrent overselling. Rolls back completely if any line has insufficient stock.
+    Atomically dispenses medicines using First-Expired, First-Out (FEFO).
+
+    Uses row-level locking on eligible batches to prevent concurrent
+    overselling. Rolls back all stock changes if any line has insufficient
+    stock.
     """
+
+    scoped_branch_id, _ = _prepare_pharmacy_branch_and_patient(
+        tenant_id=tenant_id,
+        branch_id=branch_id,
+        patient=None,
+    )
+
     if not items_requested:
-        raise ValueError("At least one medicine item is required for a sale.")
+        raise ValueError(
+            "At least one medicine item is required for a sale."
+        )
 
     today = timezone.localdate()
+
     allocations: List[tuple[Medicine, MedicineBatch, int]] = []
 
     for req in items_requested:
         med_id = req.get("medicine_id")
         qty_needed = int(req.get("quantity") or 0)
-        if not med_id or qty_needed <= 0:
-            raise ValueError("Each item requires a valid medicine_id and positive quantity.")
 
-        med = Medicine.objects.filter(id=med_id, tenant_id=tenant_id, is_active=True).first()
+        if not med_id or qty_needed <= 0:
+            raise ValueError(
+                "Each item requires a valid medicine_id and positive quantity."
+            )
+
+        med = Medicine.objects.filter(
+            id=med_id,
+            tenant_id=tenant_id,
+            is_active=True,
+        ).first()
+
         if not med:
-            raise ValueError("Medicine not found in current organization.")
+            raise ValueError(
+                "Medicine not found in current organization."
+            )
 
         batches_qs = (
             MedicineBatch.objects.select_for_update()
@@ -161,28 +226,58 @@ def dispense_fefo_sale(
                 expiry_date__gt=today,
                 quantity_on_hand__gt=0,
             )
-            .order_by("expiry_date", "created_at")
         )
-        if branch_id:
-            batches_qs = batches_qs.filter(branch_id=branch_id)
+
+        # Enforce the validated branch scope.
+        if scoped_branch_id is not None:
+            batches_qs = batches_qs.filter(
+                branch_id=scoped_branch_id
+            )
+
+        batches_qs = batches_qs.order_by(
+            "expiry_date",
+            "created_at",
+        )
 
         remaining = qty_needed
+
         for batch in batches_qs:
             if remaining <= 0:
                 break
-            take = min(batch.quantity_on_hand, remaining)
+
+            take = min(
+                batch.quantity_on_hand,
+                remaining,
+            )
+
             batch.quantity_on_hand -= take
-            batch.save(update_fields=["quantity_on_hand", "updated_at"])
-            allocations.append((med, batch, take))
+
+            batch.save(
+                update_fields=[
+                    "quantity_on_hand",
+                    "updated_at",
+                ]
+            )
+
+            allocations.append(
+                (med, batch, take)
+            )
+
             remaining -= take
 
         if remaining > 0:
-            raise ValueError(f"Insufficient valid non-expired stock for {med.brand_name}.")
+            raise ValueError(
+                f"Insufficient valid non-expired stock for {med.brand_name}."
+            )
 
-    invoice_no = f"RX-{timezone.localdate().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    invoice_no = (
+        f"RX-{timezone.localdate().strftime('%Y%m%d')}-"
+        f"{uuid.uuid4().hex[:6].upper()}"
+    )
+
     sale = PharmacySale.objects.create(
         tenant_id=tenant_id,
-        branch_id=branch_id,
+        branch_id=scoped_branch_id,
         invoice_number=invoice_no,
         customer_name=customer_name.strip(),
     )
@@ -191,10 +286,21 @@ def dispense_fefo_sale(
     total_gst = Decimal("0.00")
 
     for med, batch, qty in allocations:
+
         unit_price = _quantize_money(batch.mrp)
-        line_base = _quantize_money(unit_price * Decimal(qty))
-        line_gst = _quantize_money((line_base * med.gst_rate_percent) / Decimal("100"))
-        line_total = _quantize_money(line_base + line_gst)
+
+        line_base = _quantize_money(
+            unit_price * Decimal(qty)
+        )
+
+        line_gst = _quantize_money(
+            (line_base * med.gst_rate_percent)
+            / Decimal("100")
+        )
+
+        line_total = _quantize_money(
+            line_base + line_gst
+        )
 
         PharmacySaleItem.objects.create(
             sale=sale,
@@ -205,9 +311,10 @@ def dispense_fefo_sale(
             gst_amount=line_gst,
             line_total=line_total,
         )
+
         StockMovement.objects.create(
             tenant_id=tenant_id,
-            branch_id=branch_id,
+            branch_id=scoped_branch_id,
             medicine=med,
             batch=batch,
             movement_type=StockMovementType.SALE,
@@ -215,13 +322,25 @@ def dispense_fefo_sale(
             reference_id=sale.invoice_number,
             notes=f"FEFO dispense from batch {batch.batch_number}",
         )
+
         subtotal += line_base
         total_gst += line_gst
 
     sale.subtotal_amount = _quantize_money(subtotal)
     sale.gst_amount = _quantize_money(total_gst)
-    sale.total_amount = _quantize_money(subtotal + total_gst)
-    sale.save(update_fields=["subtotal_amount", "gst_amount", "total_amount", "updated_at"])
+
+    sale.total_amount = _quantize_money(
+        subtotal + total_gst
+    )
+
+    sale.save(
+        update_fields=[
+            "subtotal_amount",
+            "gst_amount",
+            "total_amount",
+            "updated_at",
+        ]
+    )
 
     record_audit_log(
         action="pharmacy.sale.dispensed",
@@ -229,16 +348,29 @@ def dispense_fefo_sale(
         resource_id=sale.id,
         actor=actor,
         tenant_id=tenant_id,
-        branch_id=branch_id,
+        branch_id=scoped_branch_id,
         request=request,
-        metadata={"invoice_number": sale.invoice_number, "total_amount": str(sale.total_amount)},
+        metadata={
+            "invoice_number": sale.invoice_number,
+            "total_amount": str(sale.total_amount),
+        },
     )
+
     return sale
 
 
 def export_pharmacy_sales_csv(sales_qs: QuerySet) -> str:
-    headers = ["invoice_number", "customer_name", "subtotal_amount", "gst_amount", "total_amount", "created_at"]
+    headers = [
+        "invoice_number",
+        "customer_name",
+        "subtotal_amount",
+        "gst_amount",
+        "total_amount",
+        "created_at",
+    ]
+
     rows: List[Dict[str, Any]] = []
+
     for s in sales_qs:
         rows.append({
             "invoice_number": s.invoice_number,
@@ -248,4 +380,5 @@ def export_pharmacy_sales_csv(sales_qs: QuerySet) -> str:
             "total_amount": str(s.total_amount),
             "created_at": s.created_at.isoformat(),
         })
+
     return export_rows_to_csv(headers, rows)

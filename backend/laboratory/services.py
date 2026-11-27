@@ -225,7 +225,11 @@ def record_test_result(
         raise ValueError(
             "Lab order item not found in your organization."
         )
-
+    if item.order.status in {LabOrderStatus.VERIFIED, LabOrderStatus.DELIVERED}:
+        raise ValueError("Cannot modify results after a lab order is verified or delivered.")
+    existing_result = getattr(item, "result", None)
+    if existing_result and getattr(existing_result, "is_verified", False):
+        raise ValueError("Cannot modify an already verified lab result.")
     # Prevent modifications after order verification or delivery.
     if item.order.status in {
         LabOrderStatus.VERIFIED,

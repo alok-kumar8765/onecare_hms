@@ -103,7 +103,7 @@ def pharmacy_dashboard_view(request):
 
     if request.method == "POST":
         if not tenant_id:
-            error = "No tenant context found. Please contact your administrator."
+            error = "No clinic or hospital organization (tenant) is linked to your account. Sign in with a tenant staff account or use a tenant-scoped account first."
         else:
             action = request.POST.get("action")
 

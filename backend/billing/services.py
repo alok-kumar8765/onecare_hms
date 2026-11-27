@@ -31,15 +31,22 @@ def _q(val: Decimal) -> Decimal:
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
+# def _generate_invoice_number() -> str:
+#     for _ in range(10):
+#         candidate = (
+#             f"INV-{timezone.localdate().strftime('%Y%m%d')}-"
+#             f"{uuid.uuid4().hex[:6].upper()}"
+#         )
+#         if not Invoice.objects.filter(invoice_number=candidate).exists():
+#             return candidate
+
+#     raise RuntimeError("Unable to generate a unique invoice number.")
+
 def _generate_invoice_number() -> str:
     for _ in range(10):
-        candidate = (
-            f"INV-{timezone.localdate().strftime('%Y%m%d')}-"
-            f"{uuid.uuid4().hex[:6].upper()}"
-        )
+        candidate = f"INV-{timezone.localdate().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
         if not Invoice.objects.filter(invoice_number=candidate).exists():
             return candidate
-
     raise RuntimeError("Unable to generate a unique invoice number.")
 
 @transaction.atomic
@@ -277,6 +284,10 @@ def record_expense(
     actor=None,
     request=None,
 ) -> ExpenseEntry:
+    scoped_branch_id = resolve_scoped_branch_id(
+        tenant_id=tenant_id,
+        requested_branch_id=branch_id,
+    )
     clean_amount = _quantize_money(amount)
     if not title or not title.strip():
         raise ValueError("Expense title is required.")
@@ -306,7 +317,7 @@ def record_expense(
         resource_id=entry.id,
         actor=actor,
         tenant_id=tenant_id,
-        branch_id=branch_id,
+        branch_id=scoped_branch_id,
         request=request,
         metadata={"title": entry.title, "amount": str(entry.amount)},
     )
