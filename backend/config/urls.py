@@ -44,6 +44,7 @@ urlpatterns = [
     path("ipd/", include("ipd.urls")),
     path("billing/", include("billing.urls")),
     path("core/", include("core.urls")),
+    path("hr/", include("hr.urls")),
 ]
 
 if settings.DEBUG:

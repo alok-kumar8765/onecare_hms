@@ -148,13 +148,21 @@ def clinic_dashboard_view(request):
     start_date = _parse_date_safe(request.GET.get("start_date"))
     end_date = _parse_date_safe(request.GET.get("end_date"))
 
-    encounters_qs = filter_encounters_queryset(
+    encounters_qs = (
+    filter_encounters_queryset(
         tenant_id=tenant_id,
         period=period,
         doctor_id=doctor_id or None,
         start_date=start_date,
         end_date=end_date,
-    ) if tenant_id else []
+    ).select_related(
+        "patient",
+        "doctor",
+        "prescription",
+    )
+    if tenant_id
+    else []
+    )
 
     if request.GET.get("export") == "csv" and tenant_id:
         csv_content = export_encounters_csv(encounters_qs)
