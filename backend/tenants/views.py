@@ -12,6 +12,7 @@ from core.import_export import export_rows_to_csv
 from core.models import AuditLog
 from ipd.models import Bed, IPDAdmission, Ward
 from laboratory.models import LabOrder, LabTest
+from django.core.exceptions import ValidationError
 from pharmacy.models import Medicine, MedicineBatch, PharmacySale
 from .models import Branch, DeploymentPreset, ModuleCode, ModuleEntitlement, PlatformAnnouncement, Tenant
 from .services import (
@@ -195,13 +196,35 @@ def setup_wizard_view(request):
                 username = (request.POST.get("username") or "").strip()
                 password = (request.POST.get("password") or "").strip()
                 role = (request.POST.get("role") or "").strip()
-                branch_id = request.POST.get("branch_id") or None
+                raw_branch_id = (request.POST.get("branch_id") or "").strip() or None
+
                 if not username or not password:
                     raise ValueError("Username and password are required for staff creation.")
+
                 if role not in ALLOWED_STAFF_ROLES:
                     raise ValueError("Invalid staff role selected.")
+
                 if User.objects.filter(username=username).exists():
                     raise ValueError(f"Username '{username}' already exists.")
+
+                validated_branch_id = None
+
+                if raw_branch_id:
+                    try:
+                        branch_obj = Branch.objects.filter(
+                            id=raw_branch_id,
+                            tenant_id=active_tenant.id,
+                        ).first()
+                    except (ValueError, TypeError,ValidationError):
+                        branch_obj = None
+
+                    if not branch_obj:
+                        raise ValueError(
+                            "Selected branch does not belong to the active organization."
+                        )
+
+                    validated_branch_id = branch_obj.id
+
                 staff = User.objects.create_user(
                     username=username,
                     password=password,
@@ -209,9 +232,13 @@ def setup_wizard_view(request):
                     last_name=(request.POST.get("last_name") or "").strip(),
                     role=role,
                     tenant_id=active_tenant.id,
-                    primary_branch_id=branch_id,
+                    primary_branch_id=validated_branch_id,
                 )
-                feedback = f"Created user '{staff.username}' with role {role} under {active_tenant.name}."
+
+                feedback = (
+                    f"Created user '{staff.username}' with role {role} "
+                    f"under {active_tenant.name}."
+                )
         except ValueError as exc:
             error = str(exc)
 

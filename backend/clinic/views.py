@@ -54,8 +54,6 @@ def clinic_dashboard_view(request):
         )
         
     if request.method == "POST" and tenant_id:
-        if not tenant_id and request.method == "POST":
-            error = "No clinic/hospital tenant is associated with your account. Sign in with a tenant user or assign a tenant first."
         action = request.POST.get("action")
         try:
             if action == "register_patient":

@@ -4,7 +4,7 @@ import hmac
 import json
 from datetime import datetime, timedelta, timezone as dt_timezone
 from django.utils import timezone
-from accounts.models import User, UserDevice
+from accounts.models import User, UserDevice, UserRole
 from accounts.services import (
     issue_whatsapp_otp,
     verify_whatsapp_otp,
@@ -514,3 +514,64 @@ def test_patient_branch_alignment_rejects_mismatched_branch():
             patient=patient,
             branch_id=branch_2,
         )
+@pytest.mark.django_db
+def test_setup_wizard_rejects_cross_tenant_branch_on_staff_creation(client):
+    from django.urls import reverse
+
+    from tenants.models import Tenant, Branch
+
+    # Create two separate hospitals.
+    tenant_a = Tenant.objects.create(
+        name="Hospital Alpha",
+        slug=f"hospital-alpha-{uuid.uuid4().hex[:8]}",
+    )
+
+    tenant_b = Tenant.objects.create(
+        name="Hospital Beta",
+        slug=f"hospital-beta-{uuid.uuid4().hex[:8]}",
+    )
+
+    # Create a branch belonging to Hospital Beta.
+    branch_b = Branch.objects.create(
+        tenant=tenant_b,
+        name="Beta Wing",
+        code=f"BW-{uuid.uuid4().hex[:6].upper()}",
+    )
+
+    # Create Hospital Alpha admin.
+    admin_a = User.objects.create_user(
+        username=f"admin_alpha_{uuid.uuid4().hex[:6]}",
+        password="StrongPassword123!",
+        role=UserRole.HOSPITAL_ADMIN,
+        tenant_id=tenant_a.id,
+    )
+
+    client.force_login(admin_a)
+
+    url = reverse("tenants-setup-wizard")
+
+    # Try assigning Hospital Beta branch to Hospital Alpha staff.
+    response = client.post(
+        url,
+        {
+            "action": "create_staff",
+            "tenant_id": str(tenant_a.id),
+            "username": f"rogue_staff_{uuid.uuid4().hex[:6]}",
+            "password": "StrongPassword123!",
+            "role": UserRole.NURSE,
+            "branch_id": str(branch_b.id),
+        },
+    )
+
+    assert response.status_code == 200
+
+    # Staff must not be created.
+    assert not User.objects.filter(
+        username__startswith="rogue_staff_"
+    ).exists()
+
+    # Validation error should be displayed.
+    assert (
+        b"Selected branch does not belong to the active organization."
+        in response.content
+    )
