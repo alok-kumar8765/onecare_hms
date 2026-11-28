@@ -1,19 +1,21 @@
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Dict, List
+from typing import Dict
+from math import ceil
+
 from django.db import transaction
 from django.db.models import Sum
+from django.utils import timezone
+
 from billing.models import Invoice, InvoiceStatus
 from billing.services import create_invoice_with_items
 from clinic.models import Prescription
 from core.audit import record_audit_log
+from core.allergy_checks import find_allergy_conflicts
+from core.scoping import validate_patient_branch_alignment
 from ipd.models import IPDAdmission
 from laboratory.models import LabOrder
 from pharmacy.models import Medicine, PharmacySale
 from pharmacy.services import dispense_fefo_sale
-from core.allergy_checks import find_allergy_conflicts
-from math import ceil
-from django.utils import timezone
-
 
 def _q(val: Decimal) -> Decimal:
     return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -80,7 +82,11 @@ def dispense_prescription_to_pharmacy_sale(
         raise ValueError("Prescription has no medicine items to dispense.")
 
     patient = prescription.encounter.patient
+    validate_patient_branch_alignment(tenant_id=tenant_id, patient=patient, branch_id=branch_id or prescription.encounter.branch_id,)
+    effective_branch_id = branch_id or prescription.encounter.branch_id
 
+    if effective_branch_id:
+        validate_patient_branch_alignment(tenant_id=tenant_id, patient=patient, branch_id=effective_branch_id,)
     # -----------------------------------------
     # PATIENT ALLERGY CHECK
     # -----------------------------------------
@@ -103,7 +109,7 @@ def dispense_prescription_to_pharmacy_sale(
             resource_id=prescription.id,
             actor=actor,
             tenant_id=tenant_id,
-            branch_id=branch_id or prescription.encounter.branch_id,
+            branch_id=effective_branch_id,
             request=request,
             metadata={
                 "conflicts": conflicts,
@@ -166,7 +172,8 @@ def create_invoice_from_lab_order(
     if not order:
         raise ValueError("Lab order not found in your organization.")
 
-    
+    validate_patient_branch_alignment(tenant_id=tenant_id, patient=order.patient, branch_id=order.branch_id,)
+
     items_payload = []
     for item in order.items.select_related("test").all():
         items_payload.append({
@@ -208,7 +215,6 @@ def create_invoice_from_lab_order(
 
 
 @transaction.atomic
-
 def create_invoice_from_ipd_admission(
     *,
     tenant_id,
@@ -227,6 +233,8 @@ def create_invoice_from_ipd_admission(
     if not admission:
         raise ValueError("IPD admission not found in your organization.")
 
+    validate_patient_branch_alignment(tenant_id=tenant_id, patient=admission.patient, branch_id=admission.branch_id,)
+    
     if admission.total_amount <= Decimal("0.00"):
         raise ValueError(
             "IPD admission has no settled charges yet. Discharge or add charges first."

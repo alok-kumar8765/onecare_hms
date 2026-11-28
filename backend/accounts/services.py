@@ -69,24 +69,53 @@ def issue_whatsapp_otp(user: User, request=None, provider_mode: str = "mock") ->
     return challenge, otp_code
 
 
-def verify_whatsapp_otp(challenge: WhatsAppOTPChallenge, code: str, request=None) -> bool:
-    if challenge.is_consumed or challenge.is_expired or challenge.attempts >= 5:
+# def verify_whatsapp_otp(challenge: WhatsAppOTPChallenge, code: str, request=None) -> bool:
+#     if challenge.is_consumed or challenge.is_expired or challenge.attempts >= 5:
+#         return False
+#     challenge.attempts += 1
+#     if hmac.compare_digest(challenge.code_hash, _hash_otp(code or "")):
+#         challenge.consumed_at = timezone.now()
+#         challenge.save(update_fields=["attempts", "consumed_at", "updated_at"])
+#         record_audit_log(
+#             action="auth.whatsapp_otp.verified",
+#             resource_type="User",
+#             resource_id=challenge.user_id,
+#             actor=challenge.user,
+#             tenant_id=challenge.tenant_id,
+#             request=request,
+#             metadata={"challenge_id": str(challenge.id)},
+#         )
+#         return True
+#     challenge.save(update_fields=["attempts", "updated_at"])
+#     return False
+
+
+@transaction.atomic
+def verify_whatsapp_otp(challenge: WhatsAppOTPChallenge, code: str, request=None,) -> bool:
+    """
+    Verifies OTP atomically.
+    Prevents concurrent requests from consuming the same challenge.
+    """
+    locked_challenge = (WhatsAppOTPChallenge.objects.select_for_update().filter(pk=challenge.pk).select_related("user").first())
+
+    if not locked_challenge:
         return False
-    challenge.attempts += 1
-    if hmac.compare_digest(challenge.code_hash, _hash_otp(code or "")):
-        challenge.consumed_at = timezone.now()
-        challenge.save(update_fields=["attempts", "consumed_at", "updated_at"])
-        record_audit_log(
-            action="auth.whatsapp_otp.verified",
-            resource_type="User",
-            resource_id=challenge.user_id,
-            actor=challenge.user,
-            tenant_id=challenge.tenant_id,
-            request=request,
-            metadata={"challenge_id": str(challenge.id)},
-        )
+
+    if (locked_challenge.is_consumed or locked_challenge.is_expired or locked_challenge.attempts >= 5):
+        return False
+
+    locked_challenge.attempts += 1
+
+    valid_code = (isinstance(code, str) and len(code.strip()) == 6 and code.strip().isdigit())
+
+    if valid_code and hmac.compare_digest(locked_challenge.code_hash, _hash_otp(code),):
+        locked_challenge.consumed_at = timezone.now()
+        locked_challenge.save(update_fields=["attempts", "consumed_at", "updated_at"])
+
+        record_audit_log(action="auth.whatsapp_otp.verified", resource_type="User", resource_id=locked_challenge.user_id, actor=locked_challenge.user, tenant_id=locked_challenge.tenant_id, request=request, metadata={"challenge_id": str(locked_challenge.id)},)
         return True
-    challenge.save(update_fields=["attempts", "updated_at"])
+
+    locked_challenge.save(update_fields=["attempts", "updated_at"])
     return False
 
 
@@ -186,7 +215,7 @@ def evaluate_login_attempt(*, username: str, password: str, user_agent: str = ""
 
 
 def approve_user_device(*, user: User, device_id, request=None) -> Optional[UserDevice]:
-    device = UserDevice.objects.filter(id=device_id, user=user, tenant_id=user.tenant_id).first()
+    device = UserDevice.objects.filter(id=device_id, user=user, tenant_id=user.tenant_id,).first()
     if not device:
         return None
     device.is_trusted = True

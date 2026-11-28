@@ -3,7 +3,7 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -60,34 +60,93 @@ class DevelopmentLicensingProvider(BaseLicensingProvider):
             return None
 
 
+# class CentralLicensingProvider(BaseLicensingProvider):
+#     """
+#     Production license token verifier using HMAC-SHA256 signature verification
+#     against LICENSE_SIGNING_SECRET or LICENSE_PUBLIC_KEY.
+#     Format: <base64url_payload>.<hex_hmac_sha256_signature>
+#     """
+#     def verify_signed_token(self, token: str) -> Optional[dict]:
+#         secret = getattr(settings, "LICENSE_SIGNING_SECRET", "") or getattr(settings, "LICENSE_PUBLIC_KEY", "")
+#         if not secret:
+#             raise ImproperlyConfigured("LICENSE_SIGNING_SECRET or LICENSE_PUBLIC_KEY must be configured for central licensing.")
+#         if not token or "." not in token:
+#             return None
+#         payload_b64, sig_hex = token.split(".", 1)
+#         expected_sig = hmac.new(
+#             secret.encode("utf-8"),
+#             payload_b64.encode("utf-8"),
+#             hashlib.sha256,
+#         ).hexdigest()
+#         if not hmac.compare_digest(expected_sig, sig_hex.strip()):
+#             return None
+#         try:
+#             padded = payload_b64 + "=" * ((4 - len(payload_b64) % 4) % 4)
+#             payload = json.loads(base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8"))
+#             if "expires_at" in payload:
+#                 datetime.fromisoformat(payload["expires_at"])
+#             return payload
+#         except Exception:
+#             return None
+
+
 class CentralLicensingProvider(BaseLicensingProvider):
     """
-    Production license token verifier using HMAC-SHA256 signature verification
-    against LICENSE_SIGNING_SECRET or LICENSE_PUBLIC_KEY.
-    Format: <base64url_payload>.<hex_hmac_sha256_signature>
+    Production license token verifier using HMAC-SHA256.
+    Format: <base64url_payload>.<hex_signature>
     """
+
     def verify_signed_token(self, token: str) -> Optional[dict]:
-        secret = getattr(settings, "LICENSE_SIGNING_SECRET", "") or getattr(settings, "LICENSE_PUBLIC_KEY", "")
+        secret = (
+            getattr(settings, "LICENSE_SIGNING_SECRET", "")
+            or getattr(settings, "LICENSE_PUBLIC_KEY", "")
+        )
+
         if not secret:
-            raise ImproperlyConfigured("LICENSE_SIGNING_SECRET or LICENSE_PUBLIC_KEY must be configured for central licensing.")
-        if not token or "." not in token:
+            raise ImproperlyConfigured(
+                "LICENSE_SIGNING_SECRET or LICENSE_PUBLIC_KEY "
+                "must be configured for central licensing."
+            )
+
+        if not isinstance(token, str) or not token or "." not in token:
             return None
+
         payload_b64, sig_hex = token.split(".", 1)
-        expected_sig = hmac.new(
-            secret.encode("utf-8"),
-            payload_b64.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
+
+        expected_sig = hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256,).hexdigest()
+
         if not hmac.compare_digest(expected_sig, sig_hex.strip()):
             return None
+
         try:
             padded = payload_b64 + "=" * ((4 - len(payload_b64) % 4) % 4)
-            payload = json.loads(base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8"))
+
+            decoded = base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8")
+
+            payload = json.loads(decoded)
+
+            if not isinstance(payload, dict):
+                return None
+
             if "expires_at" in payload:
-                datetime.fromisoformat(payload["expires_at"])
+                expires_at = payload["expires_at"]
+
+                if not isinstance(expires_at, str):
+                    return None
+
+                expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+
+                if expiry.tzinfo is None:
+                    return None
+
+                if expiry <= datetime.now(timezone.utc):
+                    return None
+
             return payload
-        except Exception:
+
+        except (ValueError, TypeError, UnicodeDecodeError):
             return None
+
 
 
 def get_licensing_provider() -> BaseLicensingProvider:

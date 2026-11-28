@@ -1,8 +1,22 @@
 import hashlib
+import base64
+import hmac
+import json
+from datetime import datetime, timedelta, timezone as dt_timezone
+from django.utils import timezone
+from accounts.models import User, UserDevice
+from accounts.services import (
+    issue_whatsapp_otp,
+    verify_whatsapp_otp,
+    _generate_totp_code,
+    approve_user_device,
+    evaluate_login_attempt,
+    verify_totp_code,
+)
+from licensing.providers import CentralLicensingProvider
 import uuid
 import pytest
 from django.core.management import call_command
-
 from clinic.models import Patient
 from clinic.services import (
     create_opd_encounter_with_prescription,
@@ -16,7 +30,10 @@ from laboratory.models import LabOrder, LabOrderStatus
 from laboratory.services import mark_sample_collected, record_test_result
 from pharmacy.services import add_medicine_and_batch, dispense_fefo_sale
 import sqlite3
-from django.core.management import call_command
+
+from core.scoping import validate_patient_branch_alignment
+from licensing.models import LicenseStatus
+from licensing.services import activate_signed_license, get_or_start_installation_license
 
 try:
     from tenants.models import Branch, Tenant
@@ -267,3 +284,233 @@ def test_backup_and_restore_on_isolated_temp_sqlite_db(tmp_path, settings):
         assert rows == [("before-restore",)]
     finally:
         restored_conn.close()
+
+
+@pytest.mark.django_db
+def test_whatsapp_otp_issue_and_single_use_verification(settings):
+    settings.SECRET_KEY = "test-secret-key-for-otp-hashing"
+
+    # user = User.objects.create_user(
+    #     username="nurse_otp",
+    #     password="StrongPassword123!",
+    #     phone_number="9876543211",
+    # )
+    user = User.objects.create_user(username=f"nurse_otp_{uuid.uuid4().hex[:8]}", password="StrongPassword123!", phone_number="9876543211",)
+
+    challenge, otp_code = issue_whatsapp_otp(
+        user,
+        provider_mode="mock",
+    )
+
+    assert verify_whatsapp_otp(challenge, otp_code) is True
+
+    challenge.refresh_from_db()
+    assert challenge.is_consumed is True
+
+    # Same OTP cannot be reused.
+    assert verify_whatsapp_otp(challenge, otp_code) is False
+
+
+@pytest.mark.django_db
+def test_central_licensing_provider_rejects_invalid_token(settings):
+    settings.LICENSE_SIGNING_SECRET = "unit-test-signing-secret"
+
+    provider = CentralLicensingProvider()
+
+    assert provider.verify_signed_token("not-a-valid-token") is None
+    assert provider.verify_signed_token("e30=.badsignature") is None
+
+
+@pytest.mark.django_db
+def test_central_licensing_provider_rejects_expired_token(settings):
+    secret = "unit-test-signing-secret"
+    settings.LICENSE_SIGNING_SECRET = secret
+
+    payload = {
+        "license_id": "TEST-001",
+        "expires_at": (
+            datetime.now(dt_timezone.utc) - timedelta(days=1)
+        ).isoformat(),
+    }
+
+    payload_b64 = base64.urlsafe_b64encode(
+        json.dumps(payload).encode("utf-8")
+    ).decode("utf-8").rstrip("=")
+
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        payload_b64.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    token = f"{payload_b64}.{signature}"
+
+    provider = CentralLicensingProvider()
+
+    assert provider.verify_signed_token(token) is None
+
+
+
+@pytest.mark.django_db
+def test_whatsapp_otp_rejects_after_five_wrong_attempts(settings):
+    settings.SECRET_KEY = "test-secret-key-for-otp-hashing"
+
+    user = User.objects.create_user(
+        username=f"nurse_attempt_{uuid.uuid4().hex[:8]}",
+        password="StrongPassword123!",
+        phone_number="9876543212",
+    )
+
+    challenge, otp_code = issue_whatsapp_otp(
+        user,
+        provider_mode="mock",
+    )
+
+    # Ensure the incorrect OTP is always different from the actual OTP.
+    wrong_code = "000000" if otp_code != "000000" else "000001"
+
+    # Five incorrect attempts should be rejected.
+    for _ in range(5):
+        assert verify_whatsapp_otp(challenge, wrong_code) is False
+
+    challenge.refresh_from_db()
+
+    assert challenge.attempts == 5
+    assert challenge.is_consumed is False
+
+    # Correct OTP must also fail after the maximum attempt limit.
+    assert verify_whatsapp_otp(challenge, otp_code) is False
+
+    challenge.refresh_from_db()
+    assert challenge.attempts == 5
+
+
+def _make_signed_token(payload: dict, secret: str) -> str:
+    payload_b64 = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).decode("utf-8").rstrip("=")
+    sig_hex = hmac.new(
+        secret.encode("utf-8"),
+        payload_b64.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{payload_b64}.{sig_hex}"
+
+
+@pytest.mark.django_db
+def test_totp_lockout_and_device_approval_flow(settings):
+    settings.MAX_FAILED_LOGIN_ATTEMPTS = 2
+    settings.LOGIN_LOCKOUT_MINUTES = 15
+
+    user = User.objects.create_user(
+        username="doc_security_test",
+        password="StrongPassword123!",
+        phone_number="9876543219",
+    )
+    secret = user.ensure_totp_secret()
+    valid_totp = _generate_totp_code(secret)
+    assert verify_totp_code(secret, valid_totp) is True
+
+    # Two bad passwords trigger account lockout
+    r1 = evaluate_login_attempt(username="doc_security_test", password="wrong", ip_address="127.0.0.1")
+    assert r1["ok"] is False
+    r2 = evaluate_login_attempt(username="doc_security_test", password="wrong", ip_address="127.0.0.1")
+    assert r2["ok"] is False
+
+    user.refresh_from_db()
+    assert user.is_account_locked is True
+
+    # Unlock and verify login + device approval
+    user.locked_until = None
+    user.failed_login_attempts = 0
+    user.save(update_fields=["locked_until", "failed_login_attempts"])
+
+    ok_res = evaluate_login_attempt(
+        username="doc_security_test",
+        password="StrongPassword123!",
+        user_agent="TestBrowser/1.0",
+        ip_address="127.0.0.1",
+    )
+    assert ok_res["ok"] is True
+    device: UserDevice = ok_res["device"]
+    assert device.is_trusted is False
+
+    approved = approve_user_device(user=user, device_id=device.id)
+    assert approved is not None
+    assert approved.is_trusted is True
+
+
+@pytest.mark.django_db
+def test_signed_license_activation_and_expired_rejection(settings):
+    secret = "test-hmac-signing-secret-key"
+    settings.LICENSE_PROVIDER = "central"
+    settings.LICENSE_SIGNING_SECRET = secret
+
+    # Create a real tenant before activating module entitlements.
+    tenant = Tenant.objects.create(
+        name="Test Clinic",
+        slug=f"test-clinic-{uuid.uuid4().hex[:8]}",
+    )
+    tenant_id = tenant.id
+
+    lic = get_or_start_installation_license(tenant_id=tenant_id)
+
+    expired_token = _make_signed_token(
+        {
+            "client_name": "Test Clinic",
+            "tenant_id": str(tenant_id),
+            "installation_id": str(lic.installation_id),
+            "expires_at": (
+                timezone.now() - timedelta(days=1)
+            ).isoformat(),
+            "modules": ["CLINIC_OPD"],
+        },
+        secret,
+    )
+
+    ok_exp, _, _ = activate_signed_license(
+        tenant_id=tenant_id,
+        signed_token=expired_token,
+    )
+    assert ok_exp is False
+
+    valid_token = _make_signed_token(
+        {
+            "client_name": "Test Clinic",
+            "tenant_id": str(tenant_id),
+            "installation_id": str(lic.installation_id),
+            "expires_at": (
+                timezone.now() + timedelta(days=365)
+            ).isoformat(),
+            "modules": ["CLINIC_OPD", "BILLING"],
+        },
+        secret,
+    )
+
+    ok_val, _, updated_lic = activate_signed_license(
+        tenant_id=tenant_id,
+        signed_token=valid_token,
+    )
+
+    assert ok_val is True
+    assert updated_lic.status == LicenseStatus.ACTIVE
+
+
+@pytest.mark.django_db
+def test_patient_branch_alignment_rejects_mismatched_branch():
+    from clinic.models import Patient
+
+    tenant_a = uuid.uuid4()
+    branch_1 = uuid.uuid4()
+    branch_2 = uuid.uuid4()
+    patient = Patient.objects.create(
+        tenant_id=tenant_a,
+        branch_id=branch_1,
+        full_name="Branch Aligned Patient",
+    )
+    with pytest.raises(ValueError):
+        validate_patient_branch_alignment(
+            tenant_id=tenant_a,
+            patient=patient,
+            branch_id=branch_2,
+        )
